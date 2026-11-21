@@ -445,6 +445,7 @@ writeJson(path.join(OUT, 'data', 'worldgen.json'), bundle(path.join(DATA, 'world
 writeJson(path.join(OUT, 'data', 'enchantments.json'), bundle(path.join(DATA, 'enchantment')));
 writeJson(path.join(OUT, 'data', 'damage_types.json'), bundle(path.join(DATA, 'damage_type')));
 writeJson(path.join(OUT, 'data', 'painting_variants.json'), bundle(path.join(DATA, 'painting_variant')));
+writeJson(path.join(OUT, 'data', 'timelines.json'), { timeline: bundle(path.join(DATA, 'timeline')), world_clock: bundle(path.join(DATA, 'world_clock')), tags: bundle(path.join(DATA, 'tags', 'timeline')) });
 writeJson(path.join(OUT, 'data', 'dimension_types.json'), bundle(path.join(DATA, 'dimension_type')));
 writeJson(path.join(OUT, 'data', 'registries.json'), registries);
 copyTree(path.join(CACHE, 'structures', 'data', 'minecraft', 'structure'), path.join(OUT, 'data', 'structure'));
