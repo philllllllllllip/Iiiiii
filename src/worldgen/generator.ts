@@ -1,14 +1,13 @@
 // NoiseBasedChunkGenerator for the overworld presets (normal / large_biomes / amplified / single biome)
 // and FlatLevelSource (superflat). Pipeline per vanilla ChunkStatus order:
 //   noise (+aquifer) -> biomes -> surface -> carvers -> features (needs 3x3 neighbourhood)
+import { biomeTemperature } from '../world/climate';
 import { DensityContext, type DF } from './density';
 import { Xoroshiro, type PositionalRandomFactory } from './random';
 import { overworldParameters, netherParameters, MultiNoiseBiomeSource } from './biomesource';
 import { SurfaceSystem, NO_WATER, type SurfaceColumnCtx } from './surface';
 import { Engine, Tags, type GenAccess } from './features';
 import { applyCarvers, type CarveTarget } from './carvers';
-import { SimplexNoise } from '../util/simplex';
-import { JavaRandom } from '../util/javarandom';
 import type { BlockRegistry } from '../world/registry';
 import type { Biomes } from '../world/biomes';
 import { StructureManager } from './structures';
@@ -49,7 +48,6 @@ export class WorldGenerator {
   private biomeFeatureSets: Set<string>[] = [];
   private carvers = new Map<string, any>();
   private S: Record<string, number> = {};
-  private tempNoise = new SimplexNoise(new JavaRandom(1234n));
   readonly structures: StructureManager;
   private flatLayers: number[] | null = null;
   private singleBiome = -1;
@@ -112,16 +110,9 @@ export class WorldGenerator {
   readonly defaultBlock: number; readonly defaultFluid: number;
   private hasAquifers = true;
 
-  /** Biome.getTemperature with the height adjustment above y=80. */
+  /** Biome.getHeightAdjustedTemperature (shared exact port in world/climate.ts). */
   temperature(b: number, x: number, y: number, z: number): number {
-    const def = this.biomes.list[b];
-    let t = def.temperature;
-    if (def.temperatureModifier === 'frozen') {
-      const d = this.tempNoise.getValue(x * 0.05, z * 0.05) * 7 + this.tempNoise.getValue(x * 0.2, z * 0.2) * 0.05;
-      if (d + t < 0.3) { const e = this.tempNoise.getValue(x * 0.09, z * 0.09) * 0.8; if (e > 0.2) t = 0.2; }
-    }
-    if (y > 80) t -= ((this.tempNoise.getValue(x / 8, z / 8) * 8) + y - 80) * 0.05 / 40;
-    return t;
+    return biomeTemperature(this.biomes.list[b], x, y, z, this.seaLevel);
   }
 
   /** Climate sample + nearest biome at quart coordinates. */
