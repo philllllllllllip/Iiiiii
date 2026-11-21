@@ -41,6 +41,11 @@ export interface Bundle {
   dimensionTypes: Record<string, any>;
   worldgen: Record<string, any>;
   tags: Record<string, any>;
+  registries: Record<string, string[]>;
+  items: { definitions: Record<string, any>; components: Record<string, any> };
+  lootTables: Record<string, any>;
+  recipes: Record<string, any>;
+  splashes: string;
 }
 
 export async function loadBundle(progress?: (done: number, total: number) => void): Promise<Bundle> {
@@ -62,6 +67,11 @@ export async function loadBundle(progress?: (done: number, total: number) => voi
     dimensionTypes: loadJson('data/dimension_types.json'),
     worldgen: loadJson('data/worldgen.json'),
     tags: loadJson('data/tags.json'),
+    registries: loadJson('data/registries.json'),
+    items: loadJson('items.json'),
+    lootTables: loadJson('data/loot_tables.json'),
+    recipes: loadJson('data/recipes.json'),
+    splashes: loadText('texts/splashes.txt'),
   };
   const keys = Object.keys(tasks);
   let done = 0;
