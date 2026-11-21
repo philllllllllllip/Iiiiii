@@ -11,6 +11,7 @@ import { Game } from './game/game';
 import { WorldList, WorldStore, type WorldMeta } from './save/store';
 import { parseSeed } from './worldgen/random';
 import { SoundManager } from './audio/sounds';
+import { ChatScreen } from './gui/chat';
 import { InventoryScreen, CreativeScreen, CraftingTableScreen, ChestScreen, FurnaceScreen, Recipes } from './gui/inventory';
 
 const OPTIONS_KEY = 'mc26.3-options';
@@ -133,7 +134,7 @@ class App implements AppApi {
       s.init(this.g.width, this.g.height);
       if (document.pointerLockElement) document.exitPointerLock();
       if (this.game) { this.game.attackHeld = false; this.game.useHeld = false; }
-    } else if (this.game) this.canvas.requestPointerLock?.();
+    } else if (this.game) { try { (this.canvas.requestPointerLock() as any)?.catch?.(() => {}); } catch { /* needs a user gesture */ } }
     if (this.game) this.game.paused = !!s && s.isPauseScreen();
   }
 
@@ -152,7 +153,7 @@ class App implements AppApi {
     if (this.game) {
       const s = this.game.settings, o = this.options;
       const meshChange = s.smoothLighting !== o.smoothLighting || s.biomeBlend !== o.biomeBlend;
-      Object.assign(s, { renderDistance: o.renderDistance, fov: o.fov, gamma: o.gamma, clouds: o.clouds, viewBobbing: o.viewBobbing, smoothLighting: o.smoothLighting, biomeBlend: o.biomeBlend, mouseSensitivity: o.mouseSensitivity, invertY: o.invertY });
+      Object.assign(s, { renderDistance: o.renderDistance, fov: o.fov, gamma: o.gamma, clouds: o.clouds, viewBobbing: o.viewBobbing, smoothLighting: o.smoothLighting, biomeBlend: o.biomeBlend, mouseSensitivity: o.mouseSensitivity, invertY: o.invertY, shadows: o.shadows });
       if (meshChange) this.game.client.post({ type: 'options', smoothLighting: o.smoothLighting, biomeBlend: o.biomeBlend });
     }
     if (this.screen) { this.g.begin(this.canvas.width, this.canvas.height, this.options.guiScale); this.screen.width = this.g.width; this.screen.height = this.g.height; }
@@ -180,7 +181,7 @@ class App implements AppApi {
     w.lastPlayed = Date.now();
     await this.worlds.put(w);
     const o = this.options;
-    const game = new Game(this.gl, this.bundle, { renderDistance: o.renderDistance, fov: o.fov, gamma: o.gamma, clouds: o.clouds, viewBobbing: o.viewBobbing, smoothLighting: o.smoothLighting, biomeBlend: o.biomeBlend, mouseSensitivity: o.mouseSensitivity, invertY: o.invertY },
+    const game = new Game(this.gl, this.bundle, { renderDistance: o.renderDistance, fov: o.fov, gamma: o.gamma, clouds: o.clouds, viewBobbing: o.viewBobbing, smoothLighting: o.smoothLighting, biomeBlend: o.biomeBlend, mouseSensitivity: o.mouseSensitivity, invertY: o.invertY, shadows: o.shadows },
       this.resources!.cloudsTex, this.resources!.endSky);
     this.game = game;
     game.hardcore = w.hardcore;
@@ -282,7 +283,7 @@ class App implements AppApi {
       toGui(e);
       if (this.screen) { this.mouseDown = e.button; this.screen.mouseDown(this.ui(), e.button); return; }
       const g = this.game; if (!g) return;
-      if (document.pointerLockElement !== c) { c.requestPointerLock(); return; }
+      if (document.pointerLockElement !== c) { try { (c.requestPointerLock() as any)?.catch?.(() => {}); } catch { /* gesture */ } return; }
       if (e.button === 0) g.attackHeld = true;
       if (e.button === 2) { g.useHeld = true; g.useDelay = 0; }
       if (e.button === 1) g.pickBlock();
@@ -307,7 +308,7 @@ class App implements AppApi {
       this.sounds.resume();
       if (this.screen) {
         if (this.screen.key(e)) return;
-        if (e.key.length === 1 && this.screen.char(e.key)) return;
+        if (e.key.length === 1 && !e.ctrlKey && this.screen.char(e.key)) return;
         if (e.code === this.options.keys.inventory && (this.screen instanceof InventoryScreen || this.screen instanceof CreativeScreen || this.screen instanceof ChestScreen || this.screen instanceof CraftingTableScreen || this.screen instanceof FurnaceScreen) && !this.screen.typing()) this.screen.onClose();
         return;
       }
@@ -319,6 +320,7 @@ class App implements AppApi {
       else if (e.code === k.hideGui) this.hud!.hidden = !this.hud!.hidden;
       else if (e.code === k.inventory) this.setScreen(g.player.gameMode === 'creative' ? new CreativeScreen(this, g) : new InventoryScreen(this, g));
       else if (e.code === k.drop) g.dropHeld(e.ctrlKey);
+      else if (e.code === k.chat || e.code === 'Slash') { e.preventDefault(); this.setScreen(new ChatScreen(this, g, this.hud!, this.world!.seed, this.world!.cheats || this.world!.gameMode === 'creative', e.code === 'Slash' ? '/' : '')); }
       else if (/^Digit[1-9]$/.test(e.code)) g.selectSlot(+e.code.slice(5) - 1);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));

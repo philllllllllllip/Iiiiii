@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     if (keys.has('ShiftLeft')) cam.y -= s;
     if (now - lastView > 250) { client.setView(cam.x, cam.y, cam.z, rd); lastView = now; }
     const biome = client.world.biome(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z));
-    wr.render(cam, gameTime, acc, biome, { renderDistance: rd, gamma: 0.5, clouds: (q.get('clouds') as any) ?? 'fancy' }, canvas.width, canvas.height);
+    wr.render(cam, gameTime, acc, biome, { renderDistance: rd, gamma: 0.5, clouds: (q.get('clouds') as any) ?? 'fancy', shadows: q.get('shadows') === '1' }, canvas.width, canvas.height);
     (window as any).__mc.frames++;
     requestAnimationFrame(frame);
   };

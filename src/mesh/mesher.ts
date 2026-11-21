@@ -33,6 +33,8 @@ export interface SectionMesh {
   quads: [number, number, number];
   /** translucent quad centres (x,y,z per quad) for back-to-front sorting */
   centers: Float32Array;
+  /** VisibilitySet: bit (a*6+b) set when faces a and b connect through non-opaque cells */
+  vis: number;
 }
 
 class QuadBuffer {
@@ -169,11 +171,42 @@ export class Mesher {
     }
     for (let d = 0; d < 6; d++) for (const [, cells] of greedy[d]) this.flushGreedy(d, cells);
     const quads: [number, number, number] = [this.buf[0].n, this.buf[1].n, this.buf[2].n];
+    const vis = this.visibility(src, ox, oy, oz);
     return {
       layers: [this.buf[0].take(), this.buf[1].take(), this.buf[2].take()],
       quads,
       centers: new Float32Array(this.buf[2].centers),
+      vis,
     };
+  }
+
+  /** VisGraph.resolve: flood-fill non-opaque cells; record which section faces each region touches. */
+  private visibility(src: MeshSource, ox: number, oy: number, oz: number): number {
+    const opaque = new Uint8Array(4096);
+    let nOpaque = 0;
+    for (let i = 0; i < 4096; i++) {
+      const s = src.getState(ox + (i & 15), oy + (i >> 8), oz + ((i >> 4) & 15));
+      if (s && this.info.solidRender[s]) { opaque[i] = 1; nOpaque++; }
+    }
+    if (nOpaque < 256) return 0x7fff; // VisGraph: fewer than 256 opaque blocks -> everything visible
+    const seen = new Uint8Array(4096); let result = 0;
+    const stack = new Int32Array(4096);
+    for (let start = 0; start < 4096; start++) {
+      if (opaque[start] || seen[start]) continue;
+      const x = start & 15, y = start >> 8, z = (start >> 4) & 15;
+      if (!(x === 0 || x === 15 || y === 0 || y === 15 || z === 0 || z === 15)) continue;
+      let faces = 0, sp = 0;
+      stack[sp++] = start; seen[start] = 1;
+      while (sp) {
+        const c = stack[--sp];
+        const cx = c & 15, cy = c >> 8, cz = (c >> 4) & 15;
+        if (cy === 0) faces |= 1; if (cy === 15) faces |= 2; if (cz === 0) faces |= 4; if (cz === 15) faces |= 8; if (cx === 0) faces |= 16; if (cx === 15) faces |= 32;
+        const nb = [cx > 0 ? c - 1 : -1, cx < 15 ? c + 1 : -1, cz > 0 ? c - 16 : -1, cz < 15 ? c + 16 : -1, cy > 0 ? c - 256 : -1, cy < 15 ? c + 256 : -1];
+        for (const n of nb) if (n >= 0 && !opaque[n] && !seen[n]) { seen[n] = 1; stack[sp++] = n; }
+      }
+      for (let a = 0; a < 6; a++) if (faces & (1 << a)) for (let b = a + 1; b < 6; b++) if (faces & (1 << b)) result |= 1 << PAIR[a * 6 + b];
+    }
+    return result;
   }
 
   private emitQuad(src: MeshSource, s: number, q: BakedQuad, x: number, y: number, z: number,
@@ -436,6 +469,10 @@ export class Mesher {
     }
   }
 }
+
+/** bit index for an unordered face pair (a < b): 15 pairs */
+export const PAIR = (() => { const t = new Int8Array(36).fill(-1); let k = 0; for (let a = 0; a < 6; a++) for (let b = a + 1; b < 6; b++) { t[a * 6 + b] = k; t[b * 6 + a] = k; k++; } return t; })();
+export const connected = (vis: number, a: number, b: number) => (vis & (1 << PAIR[a * 6 + b])) !== 0;
 
 interface GreedyCell { u: number; v: number; q: BakedQuad; layer: number; slot: number; color: number; light: number; base: number[] }
 

@@ -17,12 +17,15 @@ import { Player, type GameMode, type Difficulty, type Input } from './player';
 import { Placement } from './placement';
 import { raycast, FACE_VEC, type Hit } from './raycast';
 import { mul, rotX, rotZ, translate, rotY, scale } from '../util/mat';
+import { ParticleEngine } from '../render/particles';
+import { Mob, Arrow, MOB_TYPES, wrapDeg } from './mobs';
+import { EntityRenderer, animate } from '../render/entitymodels';
 import type { StaticData, WorldConfig } from '../worker/protocol';
 import { GEN } from '../assets/bundle';
 
 export interface GameSettings {
   renderDistance: number; fov: number; gamma: number; clouds: 'off' | 'fast' | 'fancy'; viewBobbing: boolean;
-  smoothLighting: boolean; biomeBlend: number; mouseSensitivity: number; invertY: boolean;
+  smoothLighting: boolean; biomeBlend: number; mouseSensitivity: number; invertY: boolean; shadows?: boolean;
 }
 
 export class ItemEntity extends Entity {
@@ -49,6 +52,12 @@ export class Game {
   readonly props: BlockProps; readonly items: ItemRegistry; readonly loot: LootTables; readonly placement: Placement;
   readonly client: WorldClient; readonly wr: WorldRenderer; readonly overlays: Overlays; readonly itemRenderer: ItemRenderer;
   readonly phys: PhysicsWorld; readonly player: Player;
+  readonly particles: ParticleEngine;
+  readonly mobs: Mob[] = [];
+  readonly arrows: Arrow[] = [];
+  readonly entityRenderer: EntityRenderer;
+  attackStrengthTicker = 0;
+  difficultyValue: Difficulty = 'normal';
   readonly entities: ItemEntity[] = [];
   gameTime = 0; dayTime = 6000; tickNo = 0;
   partial = 0;
@@ -56,7 +65,7 @@ export class Game {
   breaking: { x: number; y: number; z: number; progress: number; state: number } | null = null;
   destroyDelay = 0; useDelay = 0; useTicks = 0;
   input: Input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false };
-  attackHeld = false; useHeld = false;
+  attackHeld = false; useHeld = false; attackLatched = false;
   paused = false;
   heldItemName = ''; heldItemTime = 0;
   swingTime = 0; swingO = 0; swinging = false;
@@ -89,6 +98,8 @@ export class Game {
     this.client = new WorldClient(this.wr.terrain);
     this.phys = new PhysicsWorld(this.client.world, this.props, this.reg);
     this.player = new Player(this.phys);
+    this.entityRenderer = new EntityRenderer(gl, null);
+    this.particles = new ParticleEngine(gl, b.particleAtlas, b.particleAtlasImage, b.particleDefs, this.phys);
     this.player.onDeath = (src) => this.onDeath(deathMessage(src));
     this.player.onDamage = () => this.onSound('entity.player.hurt', this.player.x, this.player.y, this.player.z);
   }
@@ -103,7 +114,7 @@ export class Game {
     this.wr.setDimension(config.dimension ?? 'overworld');
     await this.client.init(data, config, worldId, this.settings.smoothLighting, this.settings.biomeBlend);
     const sp = this.client.spawn!;
-    this.player.gameMode = mode; this.player.difficulty = difficulty;
+    this.player.gameMode = mode; this.player.difficulty = difficulty; this.difficultyValue = difficulty;
     this.player.setPos(sp[0], sp[1], sp[2]);
     this.client.setView(sp[0], sp[1], sp[2], this.settings.renderDistance);
   }
@@ -140,6 +151,20 @@ export class Game {
     // swing animation (LivingEntity.updateSwingTime, 6 ticks)
     this.swingO = this.swingTime;
     if (this.swinging) { this.swingTime++; if (this.swingTime >= 6) { this.swingTime = 0; this.swinging = false; } } else this.swingTime = 0;
+    this.particles.tick();
+    this.attackStrengthTicker++;
+    for (const m of this.mobs) m.tick();
+    for (const a of this.arrows) a.tick();
+    for (let i = this.mobs.length - 1; i >= 0; i--) if (this.mobs[i].removed) this.mobs.splice(i, 1);
+    for (let i = this.arrows.length - 1; i >= 0; i--) if (this.arrows[i].removed) this.arrows.splice(i, 1);
+    this.tickSpawning();
+    this.animateTick();
+    if (p.sprinting && p.onGround && !p.inWater) { // Entity.spawnSprintParticle
+      const bx = Math.floor(p.x), by = Math.floor(p.y - 0.2), bz = Math.floor(p.z);
+      const st = this.client.world.getState(bx, by, bz);
+      if (st && this.props.collision(st).length) { const [layer, tint] = this.particleOf(st, bx, by, bz); this.particles.terrain(p.x + (Math.random() - 0.5) * 0.6, p.y + 0.1, p.z + (Math.random() - 0.5) * 0.6, -p.vx * 4, 1.5, -p.vz * 4, layer, tint, true); }
+    }
+    if (p.eyeInWater && Math.random() < 0.05) this.particles.spawn('bubble', p.x, p.y + p.eyeHeight, p.z, 0, 0.1, 0);
     // item entities
     for (const e of this.entities) {
       e.tick();
@@ -160,7 +185,9 @@ export class Game {
   private tickBreaking(): void {
     const p = this.player;
     if (this.destroyDelay > 0) { this.destroyDelay--; }
-    if (!this.attackHeld || !this.hit || p.gameMode === 'adventure' || p.gameMode === 'spectator') { this.breaking = null; return; }
+    if (this.attackHeld && !this.attackLatched) { this.attackLatched = true; if (this.attackEntity()) { this.breaking = null; return; } }
+    if (!this.attackHeld) this.attackLatched = false;
+    if (!this.attackHeld || !this.hit || p.gameMode === 'adventure' || p.gameMode === 'spectator') { this.breaking = null; if (this.attackHeld && !this.hit && !this.swinging) this.swing(); return; }
     const h = this.hit;
     if (p.gameMode === 'creative') {
       if (this.destroyDelay > 0) return;
@@ -176,6 +203,7 @@ export class Game {
     const progress = this.destroyProgress(h.state);
     if (this.breaking.progress === 0 && this.tickNo % 4 === 0) this.blockSound(h.state, 'hit', h.x, h.y, h.z);
     this.breaking.progress += progress;
+    { const [layer, tint] = this.particleOf(h.state, h.x, h.y, h.z); this.particles.crack(h.x, h.y, h.z, h.face, layer, tint); }
     if (this.tickNo % 4 === 0) this.blockSound(h.state, 'hit', h.x, h.y, h.z, 0.25, 0.5);
     if (this.breaking.progress >= 1) {
       this.destroyBlock(h.x, h.y, h.z, true);
@@ -226,6 +254,7 @@ export class Game {
     if (half === 'upper' && this.reg.name(w.getState(x, y - 1, z)) === name) others.push([x, y - 1, z]);
     const waterlogged = this.reg.prop(s, 'waterlogged') === 'true';
     this.blockSound(s, 'break', x, y, z);
+    { const [layer, tint] = this.particleOf(s, x, y, z); this.particles.destroy(x, y, z, layer, tint); }
     this.setBlock(x, y, z, waterlogged ? this.reg.state('water', { level: 0 }) : 0);
     for (const o of others) this.setBlock(o[0], o[1], o[2], 0);
     const p = this.player;
@@ -241,6 +270,284 @@ export class Game {
         if (xp && !this.enchantLevel(held, 'minecraft:silk_touch')) { p.giveXp(xp); this.onSound('entity.experience_orb.pickup', p.x, p.y, p.z, 0.1, 0.5 + Math.random()); }
       }
       if (held && this.items.maxDamage(held.id) > 0 && this.props.hardness[this.reg.stateBlock[s]] !== 0) this.damageItem(held, 1);
+    }
+  }
+
+  difficulty(): Difficulty { return this.player.difficulty; }
+  /** monsters_burn timeline track (day) approximated by the sky light level attribute being full */
+  isDay(): boolean { const t = ((this.dayTime % 24000) + 24000) % 24000; return t < 12542 || t > 23460; }
+  /** sky darkening (Level.getSkyDarken) from the sky_light_level timeline attribute */
+  skyDarken(): number { return Math.round((1 - this.wr.env.num('minecraft:gameplay/sky_light_level', this.dayTime)) * 15); }
+
+  canSee(from: Entity & { type?: any }, to: Player): boolean {
+    const ey = from.y + (from as Mob).type.eye, ty = to.y + to.eyeHeight;
+    const dx = to.x - from.x, dy = ty - ey, dz = to.z - from.z, d = Math.hypot(dx, dy, dz);
+    const steps = Math.ceil(d * 2);
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps; const s = this.client.world.getState(Math.floor(from.x + dx * t), Math.floor(ey + dy * t), Math.floor(from.z + dz * t));
+      if (s && this.info.solidRender[s]) return false;
+    }
+    return true;
+  }
+
+  /** CombatRules.getDamageAfterAbsorb: armour points and toughness from equipped items. */
+  damagePlayer(amount: number, src: Mob | null): void {
+    const p = this.player;
+    if (p.creative || p.dead) return;
+    if (src && p.difficulty === 'peaceful') return;
+    if (src && p.difficulty === 'easy') amount = Math.min(amount / 2 + 1, amount);
+    if (src && p.difficulty === 'hard') amount *= 1.5;
+    let armor = 0, tough = 0;
+    for (let i = 36; i < 40; i++) { const st = p.inventory.slots[i]; if (!st) continue; for (const m of this.items.comp(st.id, 'attribute_modifiers') ?? []) { if (String(m.type).endsWith(':armor')) armor += m.amount; if (String(m.type).endsWith('armor_toughness')) tough += m.amount; } }
+    const f = 2 + tough / 4, g = Math.min(20, Math.max(armor - amount / f, armor * 0.2));
+    amount *= 1 - g / 25;
+    if (p.hurt(amount, src ? 'mob' : 'generic') && src) {
+      const dx = src.x - p.x, dz = src.z - p.z, d = Math.hypot(dx, dz) || 1;
+      p.vx = p.vx / 2 - (dx / d) * 0.4; p.vz = p.vz / 2 - (dz / d) * 0.4; if (p.onGround) p.vy = Math.min(0.4, p.vy / 2 + 0.4);
+    }
+  }
+
+  shootArrow(m: Mob, p: Player): void {
+    const a = new Arrow(this.phys, m, this);
+    a.setPos(m.x, m.y + m.type.eye - 0.1, m.z);
+    const dx = p.x - m.x, dy = p.y + p.height / 3 - a.y, dz = p.z - m.z;
+    const h = Math.hypot(dx, dz);
+    const inacc = 14 - ({ easy: 0, normal: 1, hard: 2, peaceful: 0 } as Record<string, number>)[p.difficulty] * 4;
+    const vy = dy + h * 0.2;
+    const len = Math.hypot(dx, vy, dz) || 1;
+    a.vx = (dx / len + (Math.random() - 0.5) * 0.0075 * inacc) * 1.6; a.vy = (vy / len + (Math.random() - 0.5) * 0.0075 * inacc) * 1.6; a.vz = (dz / len + (Math.random() - 0.5) * 0.0075 * inacc) * 1.6;
+    this.arrows.push(a);
+    this.onSound('entity.skeleton.shoot', m.x, m.y, m.z, 1, 1 / (Math.random() * 0.4 + 0.8));
+  }
+
+  /** Explosion.explode: 16^3 rays, block resistance attenuation, entity damage, drops with explosion decay. */
+  explode(x: number, y: number, z: number, power: number, source: Mob | null): void {
+    const w = this.client.world;
+    const hit = new Set<string>();
+    for (let i = 0; i < 16; i++) for (let j = 0; j < 16; j++) for (let k = 0; k < 16; k++) {
+      if (!(i === 0 || i === 15 || j === 0 || j === 15 || k === 0 || k === 15)) continue;
+      let dx = i / 15 * 2 - 1, dy = j / 15 * 2 - 1, dz = k / 15 * 2 - 1;
+      const l = Math.hypot(dx, dy, dz); dx /= l; dy /= l; dz /= l;
+      let f = power * (0.7 + Math.random() * 0.6), px = x, py = y, pz = z;
+      for (; f > 0; f -= 0.22500001) {
+        const bx = Math.floor(px), by = Math.floor(py), bz = Math.floor(pz);
+        const s = w.getState(bx, by, bz);
+        if (s) f -= (blastResistance(this.reg.name(s), this.props.hardness[this.reg.stateBlock[s]]) + 0.3) * 0.3;
+        if (f > 0 && s) hit.add(bx + ',' + by + ',' + bz);
+        px += dx * 0.3; py += dy * 0.3; pz += dz * 0.3;
+      }
+    }
+    for (const key of hit) {
+      const [bx, by, bz] = key.split(',').map(Number);
+      const s = w.getState(bx, by, bz);
+      if (!s || this.props.hardness[this.reg.stateBlock[s]] < 0) continue;
+      if (Math.random() < 1 / power) for (const st of this.loot.roll('blocks/' + this.reg.name(s), { rng: Math.random, state: s, explosionRadius: power })) this.spawnItem(bx + 0.5, by + 0.5, bz + 0.5, st);
+      this.setBlock(bx, by, bz, 0);
+    }
+    // entity damage: (impact^2 + impact) / 2 * 7 * 2r + 1
+    const r2 = power * 2;
+    const dmgAt = (ex: number, ey: number, ez: number) => { const d = Math.hypot(ex - x, ey - y, ez - z) / r2; if (d > 1) return 0; const imp = 1 - d; return Math.floor((imp * imp + imp) / 2 * 7 * r2 + 1); };
+    const p = this.player;
+    const pd = dmgAt(p.x, p.y + p.eyeHeight, p.z);
+    if (pd > 0) { this.damagePlayer(pd, null); const d = Math.hypot(p.x - x, p.z - z) || 1; p.vx += (p.x - x) / d * 0.8; p.vz += (p.z - z) / d * 0.8; p.vy += 0.5; }
+    for (const m of this.mobs) if (m !== source) { const md = dmgAt(m.x, m.y + m.type.eye, m.z); if (md > 0) m.hurt(md, { x, z }); }
+    this.particles.explosion(x, y, z, power);
+    this.onSound('entity.generic.explode', x, y, z, 4, (1 + (Math.random() - Math.random()) * 0.2) * 0.7);
+  }
+
+  /** PathFinder (WalkNodeEvaluator subset): A* over standable cells, 1-block step up, drops up to 3. */
+  findPath(m: Mob, target: { x: number; y: number; z: number }): [number, number, number][] {
+    const w = this.client.world;
+    const open = (x: number, y: number, z: number) => { const s = w.getState(x, y, z); return !s || this.props.collision(s).length === 0; };
+    const stand = (x: number, y: number, z: number) => {
+      const below = w.getState(x, y - 1, z);
+      if (!below || !this.props.collision(below).length) return false;
+      const n = this.reg.name(below); if (n === 'lava' || n === 'magma_block' || n === 'cactus' || /fence|wall/.test(n)) return false;
+      for (let h = 0; h < Math.ceil(m.height); h++) if (!open(x, y + h, z)) return false;
+      const here = this.reg.name(w.getState(x, y, z)); if (here === 'lava' || here === 'fire') return false;
+      return true;
+    };
+    const sx = Math.floor(m.x), sy = Math.floor(m.y + 0.01), sz = Math.floor(m.z);
+    const tx = Math.floor(target.x), ty = Math.floor(target.y), tz = Math.floor(target.z);
+    const key = (x: number, y: number, z: number) => (x - sx + 64) * 65536 + (y - sy + 64) * 256 + (z - sz + 64);
+    const came = new Map<number, number>(), gs = new Map<number, number>();
+    const heap: [number, number, number, number, number][] = [[0, 0, sx, sy, sz]];
+    gs.set(key(sx, sy, sz), 0);
+    let best: [number, number, number] = [sx, sy, sz], bestH = Infinity, visited = 0;
+    while (heap.length && visited++ < 400) {
+      heap.sort((a, b) => a[0] - b[0]);
+      const [, g, x, y, z] = heap.shift()!;
+      const h = Math.abs(x - tx) + Math.abs(y - ty) + Math.abs(z - tz);
+      if (h < bestH) { bestH = h; best = [x, y, z]; }
+      if (h <= 1) break;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        let nx = x + dx, nz = z + dz, ny = y;
+        if (!stand(nx, ny, nz)) {
+          if (stand(nx, ny + 1, nz) && open(x, y + Math.ceil(m.height), z)) ny++;
+          else { let d = 1; while (d <= 3 && !stand(nx, ny - d, nz) && open(nx, ny - d, nz)) d++; if (d <= 3 && stand(nx, ny - d, nz)) ny -= d; else continue; }
+        }
+        if (Math.abs(nx - sx) > 48 || Math.abs(nz - sz) > 48) continue;
+        const k = key(nx, ny, nz), ng = g + 1 + (ny !== y ? 0.5 : 0);
+        if (ng < (gs.get(k) ?? Infinity)) { gs.set(k, ng); came.set(k, key(x, y, z)); heap.push([ng + Math.abs(nx - tx) + Math.abs(ny - ty) + Math.abs(nz - tz), ng, nx, ny, nz]); }
+      }
+    }
+    const path: [number, number, number][] = [];
+    let k = key(best[0], best[1], best[2]);
+    const decode = (kk: number): [number, number, number] => [Math.floor(kk / 65536) - 64 + sx, (Math.floor(kk / 256) % 256) - 64 + sy, (kk % 256) - 64 + sz];
+    while (came.has(k)) { path.unshift(decode(k)); k = came.get(k)!; }
+    return path;
+  }
+
+  onMobDeath(m: Mob): void {
+    const p = this.player;
+    const killedByPlayer = (m as any).lastHurtByPlayer ?? false;
+    if (this.gameRules.doMobLoot !== false) for (const st of this.loot.roll('entities/' + m.type.id, { rng: Math.random, killedByPlayer, looting: 0, enchantLevel: (s, e) => this.enchantLevel(s, e) })) this.spawnItem(m.x, m.y + 0.5, m.z, st);
+    if (killedByPlayer) { p.giveXp(m.type.xp + (m.type.hostile ? 0 : Math.floor(Math.random() * 3))); this.onSound('entity.experience_orb.pickup', p.x, p.y, p.z, 0.1, 0.5 + Math.random()); }
+  }
+
+  spawnMob(id: string, x: number, y: number, z: number): Mob {
+    const t = MOB_TYPES[id];
+    const m = new Mob(this.phys, t, this);
+    m.setPos(x, y, z); m.xo = x; m.yo = y; m.zo = z;
+    m.yaw = m.bodyYaw = Math.random() * 360;
+    const temp = this.biomes.list[this.client.world.biome(Math.floor(x), Math.floor(y), Math.floor(z))]?.temperature ?? 0.8;
+    m.variant = temp < 0.15 ? 'cold' : temp > 1.0 ? 'warm' : 'temperate';
+    this.mobs.push(m);
+    return m;
+  }
+
+  /** NaturalSpawner.spawnForChunk (monster / creature categories) using biome natural_mob_spawns. */
+  private tickSpawning(): void {
+    const p = this.player;
+    if (!this.gameRules.doMobSpawning || p.dead) return;
+    const counts = { monster: 0, creature: 0 };
+    for (const m of this.mobs) counts[m.type.hostile ? 'monster' : 'creature']++;
+    const w = this.client.world;
+    for (const cat of ['monster', 'creature'] as const) {
+      if (cat === 'monster' && p.difficulty === 'peaceful') continue;
+      const cap = cat === 'monster' ? 70 : 10;
+      if (counts[cat] >= cap * 0.4 || (cat === 'creature' && this.tickNo % 400 !== 0)) continue;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const cx = (Math.floor(p.x) >> 4) + Math.floor(Math.random() * 17) - 8, cz = (Math.floor(p.z) >> 4) + Math.floor(Math.random() * 17) - 8;
+        if (!w.getChunk(cx, cz)) continue;
+        const x = cx * 16 + Math.floor(Math.random() * 16), z = cz * 16 + Math.floor(Math.random() * 16);
+        const c = w.getChunk(cx, cz)!;
+        let top = 319; while (top > -64 && c.get(x & 15, top, z & 15) === 0) top--;
+        const y = -63 + Math.floor(Math.random() * (top + 2 - -63));
+        const biome = this.biomes.list[w.biome(x, y, z)];
+        const list = biome?.attributes?.['minecraft:gameplay/natural_mob_spawns']?.argument?.spawns_by_category?.[cat]
+          ?? biome?.attributes?.['minecraft:gameplay/natural_mob_spawns']?.spawns_by_category?.[cat] ?? [];
+        const choices = list.filter((e: any) => MOB_TYPES[String(e.type).replace('minecraft:', '')]);
+        if (!choices.length) continue;
+        let tw = 0; for (const e of choices) tw += e.weight;
+        let r = Math.random() * tw; let pick = choices[0];
+        for (const e of choices) { r -= e.weight; if (r < 0) { pick = e; break; } }
+        const id = String(pick.type).replace('minecraft:', '');
+        const t = MOB_TYPES[id];
+        const group = typeof pick.count === 'number' ? pick.count : (pick.count?.min_inclusive ?? 1) + Math.floor(Math.random() * ((pick.count?.max_inclusive ?? 4) - (pick.count?.min_inclusive ?? 1) + 1));
+        let gx = x, gz = z;
+        for (let n = 0; n < Math.min(group, 4); n++) {
+          gx += Math.floor(Math.random() * 6) - Math.floor(Math.random() * 6); gz += Math.floor(Math.random() * 6) - Math.floor(Math.random() * 6);
+          const d2 = (gx + 0.5 - p.x) ** 2 + (y - p.y) ** 2 + (gz + 0.5 - p.z) ** 2;
+          if (d2 < 24 * 24 || d2 > 128 * 128) continue;
+          const below = w.getState(gx, y - 1, gz);
+          if (!below || !this.info.solidRender[below]) continue;
+          let ok = true;
+          for (let h = 0; h < Math.ceil(t.height); h++) { const s = w.getState(gx, y + h, gz); if (s && this.props.collision(s).length) ok = false; if (s && this.reg.name(s) === 'water') ok = false; }
+          if (!ok) continue;
+          const sky = w.sky(gx, y, gz), bl = w.blockLight(gx, y, gz);
+          const raw = Math.max(bl, sky - this.skyDarken());
+          if (cat === 'monster') { if (bl > 0 || sky > Math.floor(Math.random() * 32) || raw > Math.floor(Math.random() * 8)) continue; }
+          else { if (raw <= 8 || this.reg.name(below) !== 'grass_block') continue; }
+          this.spawnMob(id, gx + 0.5, y, gz + 0.5);
+        }
+      }
+    }
+    // despawning (Mob.checkDespawn)
+    for (const m of this.mobs) {
+      const d2 = (m.x - p.x) ** 2 + (m.y - p.y) ** 2 + (m.z - p.z) ** 2;
+      if (!m.type.hostile) continue;
+      if (d2 > 128 * 128) m.removed = true;
+      else if (d2 > 32 * 32 && ++m.noActionTime > 600 && Math.random() < 1 / 800) m.removed = true;
+      else if (d2 <= 32 * 32) m.noActionTime = 0;
+    }
+  }
+
+  /** Player.attack: attack damage attribute x strength scale, crits, knockback, sweep sound. */
+  attackEntity(): boolean {
+    const p = this.player;
+    const [dx, dy, dz] = this.look();
+    const ox = p.x, oy = p.y + p.eyeHeight, oz = p.z;
+    const range = p.gameMode === 'creative' ? 5 : 3;
+    let best: Mob | null = null, bd = range;
+    for (const m of this.mobs) {
+      if (m.dead) continue;
+      const w2 = m.width / 2;
+      const t = rayAabb(ox, oy, oz, dx, dy, dz, m.x - w2, m.y, m.z - w2, m.x + w2, m.y + m.height, m.z + w2);
+      if (t !== null && t < bd) { bd = t; best = m; }
+    }
+    if (this.hit && this.hit.dist < bd) return false;
+    if (!best) return false;
+    const held = p.inventory.held;
+    let dmg = 1;
+    for (const mod of (held ? this.items.comp(held.id, 'attribute_modifiers') : null) ?? []) if (String(mod.type).endsWith('attack_damage')) dmg += mod.amount;
+    let speed = 4;
+    for (const mod of (held ? this.items.comp(held.id, 'attribute_modifiers') : null) ?? []) if (String(mod.type).endsWith('attack_speed')) speed += mod.amount;
+    const delay = 20 / speed;
+    const strength = Math.max(0, Math.min(1, (this.attackStrengthTicker + 0.5) / delay));
+    dmg *= 0.2 + strength * strength * 0.8;
+    const crit = strength > 0.9 && p.fallDistance > 0 && !p.onGround && !p.onClimbable() && !p.inWater;
+    if (crit) { dmg *= 1.5; for (let i = 0; i < 12; i++) this.particles.spawn('crit', best.x, best.y + best.height / 2, best.z, (Math.random() - 0.5), Math.random() * 0.5, (Math.random() - 0.5)); }
+    (best as any).lastHurtByPlayer = true;
+    const knock = 0.4 + (p.sprinting && strength > 0.9 ? 0.5 : 0);
+    if (best.hurt(dmg, { x: p.x, z: p.z }, knock)) {
+      this.onSound(crit ? 'entity.player.attack.crit' : strength > 0.9 ? 'entity.player.attack.strong' : 'entity.player.attack.weak', best.x, best.y, best.z, 1, 1);
+      if (p.sprinting && strength > 0.9) { p.vx *= 0.6; p.vz *= 0.6; p.sprinting = false; }
+      p.causeExhaustion(0.1);
+      if (held && this.items.maxDamage(held.id) > 0) this.damageItem(held, this.items.comp(held.id, 'tool') && !this.items.comp(held.id, 'weapon') ? 2 : 1);
+    }
+    this.attackStrengthTicker = 0;
+    this.swing();
+    return true;
+  }
+
+  /** Particle sprite layer + tint for a block state (model particle texture). */
+  particleOf(state: number, x: number, y: number, z: number): [number, number] {
+    const parts = this.b.blocks.states[state];
+    let sprite = 'missingno';
+    if (parts.length) { const m = this.b.models.models[this.b.blocks.parts[parts[0]][0].m]; if (m.particle !== undefined) sprite = this.b.models.sprites[m.particle]; }
+    const n = this.reg.name(state);
+    if (n === 'water') sprite = 'block/water_still'; if (n === 'lava') sprite = 'block/lava_still';
+    const slot = this.wr.textures.slotOf.get(sprite) ?? this.wr.textures.slotOf.get('missingno')!;
+    let tint = 0xffffff;
+    if (/grass_block|_leaves|^vine|fern|short_grass|tall_grass/.test(n) && !/cherry|pale_oak|azalea/.test(n)) {
+      const b = this.client.world.biome(x, y, z);
+      tint = n === 'spruce_leaves' ? 0x619961 : n === 'birch_leaves' ? 0x80a755 : /_leaves|vine/.test(n) ? this.biomes.list[b]?.foliage ?? 0x48b518 : this.biomes.grassAt(b, x, z);
+    }
+    return [slot >> 16 === 0 ? slot & 0xffff : 0, tint];
+  }
+
+  /** Level.animateTick: random display ticks for blocks around the player (torch/furnace/portal/lava). */
+  private animateTick(): void {
+    const p = this.player, w = this.client.world;
+    const px = Math.floor(p.x), py = Math.floor(p.y), pz = Math.floor(p.z);
+    for (let i = 0; i < 667; i++) for (const r of [16, 32]) {
+      const x = px + Math.floor(Math.random() * r) - Math.floor(Math.random() * r), y = py + Math.floor(Math.random() * r) - Math.floor(Math.random() * r), z = pz + Math.floor(Math.random() * r) - Math.floor(Math.random() * r);
+      const s = w.getState(x, y, z); if (!s) continue;
+      const n = this.reg.name(s);
+      if (n === 'torch' || n === 'soul_torch' || n === 'copper_torch') { this.particles.spawn('smoke', x + 0.5, y + 0.7, z + 0.5); this.particles.spawn(n === 'soul_torch' ? 'soul_fire_flame' : 'flame', x + 0.5, y + 0.7, z + 0.5); }
+      else if (n === 'wall_torch' || n === 'soul_wall_torch' || n === 'copper_wall_torch') {
+        const f = this.reg.prop(s, 'facing'); const o = { north: [0, 0.27], south: [0, -0.27], east: [-0.27, 0], west: [0.27, 0] }[f as 'north'] ?? [0, 0];
+        this.particles.spawn('smoke', x + 0.5 - o[0] * -1 * -1 + o[0] * 0, y + 0.92, z + 0.5 + o[1]); this.particles.spawn(n === 'soul_wall_torch' ? 'soul_fire_flame' : 'flame', x + 0.5 + o[0], y + 0.92, z + 0.5 + o[1]);
+      } else if ((n === 'furnace' || n === 'smoker' || n === 'blast_furnace') && this.reg.prop(s, 'lit') === 'true' && Math.random() < 0.1) {
+        this.particles.spawn('smoke', x + 0.5, y + 1.1, z + 0.5);
+      } else if (n === 'nether_portal' && Math.random() < 0.8) {
+        this.particles.spawn('portal', x + Math.random(), y + Math.random(), z + Math.random(), (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.5);
+      } else if (n === 'lava' && w.getState(x, y + 1, z) === 0 && Math.random() < 0.01) {
+        this.particles.spawn('lava', x + Math.random(), y + 1, z + Math.random());
+      } else if (n === 'campfire' && this.reg.prop(s, 'lit') === 'true' && Math.random() < 0.11) {
+        this.particles.spawn('large_smoke', x + 0.5, y + 0.5, z + 0.5, 0, 0.07, 0);
+      }
     }
   }
 
@@ -494,8 +801,22 @@ export class Game {
     const p = this.player;
     this.wr.underwater = p.eyeInWater;
     const biome = this.client.world.biome(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z));
-    this.wr.render(cam, this.dayTime, partial, biome, { renderDistance: this.settings.renderDistance, gamma: this.settings.gamma, clouds: this.settings.clouds }, width, height);
+    this.wr.render(cam, this.dayTime, partial, biome, { renderDistance: this.settings.renderDistance, gamma: this.settings.gamma, clouds: this.settings.clouds, shadows: this.settings.shadows }, width, height);
     const ox = -cam.x, oy = -cam.y, oz = -cam.z;
+    this.particles.tick();
+    this.attackStrengthTicker++;
+    for (const m of this.mobs) m.tick();
+    for (const a of this.arrows) a.tick();
+    for (let i = this.mobs.length - 1; i >= 0; i--) if (this.mobs[i].removed) this.mobs.splice(i, 1);
+    for (let i = this.arrows.length - 1; i >= 0; i--) if (this.arrows[i].removed) this.arrows.splice(i, 1);
+    this.tickSpawning();
+    this.animateTick();
+    if (p.sprinting && p.onGround && !p.inWater) { // Entity.spawnSprintParticle
+      const bx = Math.floor(p.x), by = Math.floor(p.y - 0.2), bz = Math.floor(p.z);
+      const st = this.client.world.getState(bx, by, bz);
+      if (st && this.props.collision(st).length) { const [layer, tint] = this.particleOf(st, bx, by, bz); this.particles.terrain(p.x + (Math.random() - 0.5) * 0.6, p.y + 0.1, p.z + (Math.random() - 0.5) * 0.6, -p.vx * 4, 1.5, -p.vz * 4, layer, tint, true); }
+    }
+    if (p.eyeInWater && Math.random() < 0.05) this.particles.spawn('bubble', p.x, p.y + p.eyeHeight, p.z, 0, 0.1, 0);
     // item entities
     for (const e of this.entities) {
       const ex = e.xo + (e.x - e.xo) * partial, ey = e.yo + (e.y - e.yo) * partial, ez = e.zo + (e.z - e.zo) * partial;
@@ -512,6 +833,34 @@ export class Game {
         this.itemRenderer.draw(name, 'ground', this.wr.proj, mul(pose, off), light, this.wr.lightmap.tex, this.wr.lastFog, [rotate3(this.wr.view, ITEM_LIGHT0), rotate3(this.wr.view, ITEM_LIGHT1)]);
       }
     }
+    const lights: [number[], number[]] = [rotate3(this.wr.view, ITEM_LIGHT0), rotate3(this.wr.view, ITEM_LIGHT1)];
+    for (const m of this.mobs) {
+      const ex = m.xo + (m.x - m.xo) * partial, ey = m.yo + (m.y - m.yo) * partial, ez = m.zo + (m.z - m.zo) * partial;
+      if ((ex - cam.x) ** 2 + (ez - cam.z) ** 2 > 96 * 96) continue;
+      const by = m.bodyYawO + wrapDeg(m.bodyYaw - m.bodyYawO) * partial;
+      const hy = wrapDeg(m.headYaw - by);
+      let root = mul(this.wr.view, mul(translate(ex + ox, ey + oy, ez + oz), rotY(180 - by)));
+      if (m.dead) { const f = Math.min(1, Math.sqrt(((m.deathTime + partial - 1) / 20) * 1.6)); root = mul(root, rotZ(f * 90)); }
+      const kind = m.type.model === 'zombie' || m.type.model === 'skeleton' ? 'humanoid' : m.type.model === 'creeper' ? 'creeper' : m.type.model === 'chicken' ? 'chicken' : m.type.model === 'spider' ? 'spider' : 'quadruped';
+      const amount = m.limbAmountO + (m.limbAmount - m.limbAmountO) * partial;
+      const pose = animate(kind as any, m.limbSwing, Math.min(1, amount), Math.max(-75, Math.min(75, hy)), m.pitch, m.age + partial, { aggressive: m.type.model === 'zombie' && !!m.target, attackTime: m.attackAnim / 10 });
+      const light = this.lightAt(Math.floor(ex), Math.floor(ey + m.height / 2), Math.floor(ez));
+      // CreeperRenderer.scale / getWhiteOverlayProgress
+      let f = (m.swellO + (m.swell - m.swellO) * partial) / 28;
+      const g = 1 + Math.sin(f * 100) * f * 0.01;
+      f = Math.max(0, Math.min(1, f)); f = f * f * f;
+      const sx = m.type.id === 'creeper' ? (1 + f * 0.4) * g : 1, sy = m.type.id === 'creeper' ? (1 + f * 0.1) / g : 1;
+      const sw = (m.swellO + (m.swell - m.swellO) * partial) / 28;
+      const white = m.type.id === 'creeper' && Math.floor(sw * 10) % 2 ? Math.max(0, Math.min(1, sw)) * 0.8 + 0.2 : 0;
+      this.entityRenderer.draw(m.type.model, m.type.texture(m), this.wr.proj, mul(root, scale(sx, sy, sx)), pose, light, this.wr.lightmap.tex, this.wr.lastFog, lights, m.hurtTime > 0 || m.dead, 1, white);
+      if (m.type.id === 'sheep' && !m.sheared) this.entityRenderer.draw('sheep_wool', 'entity/sheep/sheep_wool.png', this.wr.proj, root, pose, light, this.wr.lightmap.tex, this.wr.lastFog, lights, m.hurtTime > 0 || m.dead);
+    }
+    for (const a of this.arrows) {
+      const ex = a.xo + (a.x - a.xo) * partial, ey = a.yo + (a.y - a.yo) * partial, ez = a.zo + (a.z - a.zo) * partial;
+      const root = mul(this.wr.view, mul(translate(ex + ox, ey + oy, ez + oz), mul(rotY(a.yaw - 90), mul(rotZ(a.pitch), translate(0, -1.5, 0)))));
+      this.entityRenderer.draw('arrow', 'entity/projectiles/arrow.png', this.wr.proj, root, {}, this.lightAt(Math.floor(ex), Math.floor(ey), Math.floor(ez)), this.wr.lightmap.tex, this.wr.lastFog, lights, false);
+    }
+    this.particles.render(this.wr.proj, this.wr.view, [cam.x, cam.y, cam.z], cam.yaw, cam.pitch, partial, this.wr.lastFog, this.wr.lightmap.tex, this.wr.textures.arrays[0], (x, y, z) => this.lightAt(x, y, z));
     // selection outline + crumbling
     if (this.hit && !p.dead) {
       const h = this.hit;
@@ -551,6 +900,26 @@ export class Game {
     this.itemRenderer.draw(name, 'firstperson_righthand', this.wr.proj, mul(this.camBobOnly(partial), m), light, this.wr.lightmap.tex, null, [ITEM_LIGHT0, ITEM_LIGHT1]);
   }
   private camBobOnly(partial: number) { const c = this.camera(partial); return c.bob ?? scale(1, 1, 1); }
+}
+
+function rayAabb(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): number | null {
+  let tmin = 0, tmax = Infinity;
+  for (const [o, d, lo, hi] of [[ox, dx, x0, x1], [oy, dy, y0, y1], [oz, dz, z0, z1]]) {
+    if (Math.abs(d) < 1e-9) { if (o < lo || o > hi) return null; continue; }
+    let a = (lo - o) / d, b = (hi - o) / d; if (a > b) [a, b] = [b, a];
+    tmin = Math.max(tmin, a); tmax = Math.min(tmax, b); if (tmin > tmax) return null;
+  }
+  return tmin;
+}
+
+/** Explosion resistance (BlockBehaviour.Properties.explosionResistance) families. */
+function blastResistance(name: string, hardness: number): number {
+  if (hardness < 0) return 3600000;
+  if (/^(obsidian|crying_obsidian|ancient_debris|netherite_block|respawn_anchor|enchanting_table|anvil|chipped_anvil|damaged_anvil|reinforced_deepslate|ender_chest)$/.test(name)) return 1200;
+  if (name === 'water' || name === 'lava') return 100;
+  if (/stone|cobble|brick|deepslate|andesite|diorite|granite|tuff|basalt|blackstone|prismarine|purpur|_ore$|concrete$|terracotta|quartz|sulfur/.test(name) && !/sandstone/.test(name)) return 6;
+  if (/sandstone/.test(name)) return 0.8;
+  return hardness;
 }
 
 function rotate3(m: Float32Array, v: number[]): number[] {

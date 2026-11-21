@@ -101,3 +101,23 @@ Driven by the 26.3 worldgen data pack (data/minecraft/worldgen), not a homemade 
   pickup/place/swap/split, drag-distribute, shift-click, number-key hotbar swap, double-click collect.
 * Sound manager: sounds.json events, weighted variants, categories, block sound groups, menu/game music.
 * Options and worlds persist (localStorage / IndexedDB); player, time and containers saved per world.
+
+## Phase 6 — Mobs, particles, chat, effects — DONE (subset)
+* `render/entitymodels.ts`: box-UV entity models (zombie, skeleton, creeper, pig, cow, sheep + wool,
+  chicken, spider, arrow) with vanilla walk/attack/head animations; hurt tint, death tilt.
+* `game/mobs.ts`: mob AI (wander, look, panic, melee, skeleton bow + arrows, creeper swell/explosion,
+  spider climbing), A* pathfinding over walkable cells, natural spawning with light/height checks and
+  mob caps, loot-table drops on death, knockback, combat with attack cooldown.
+* `render/particles.ts`: block destroy/crack/terrain particles, explosion, spawn/poof, driven by
+  particles.json sprite lists.
+* Chat (T or /) with commands: /gamemode /time /tp /give /difficulty /gamerule /weather /kill /summon
+  /seed /help; chat history fades on the HUD.
+* Screen effects: vignette (brightness-tracked), underwater overlay.
+
+## Phase 7 — Performance, culling, persistence — DONE (core)
+* Frustum culling + vanilla-style section occlusion culling (VisGraph flood fill → 15 face-pair bits,
+  BFS from the camera section through open faces).
+* Light engine: batched section dirty flush and cached chunk lookup (64 → 25 ms/chunk).
+* Optional sun/moon shadow map (Video Settings → Shadows, **off by default**): 2048² depth map,
+  texel-snapped ortho cascade, 3×3 PCF, applied only to sky-lit surfaces (shots/shadows_1.png).
+* Save/load of chunks, player, containers and options (IndexedDB + localStorage); autosave.

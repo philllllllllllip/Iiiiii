@@ -28,7 +28,7 @@ export type FromWorld =
   | { type: 'ready' }
   | { type: 'chunk'; cx: number; cz: number; states: Uint16Array; sky: Uint8Array; block: Uint8Array; biomes: Uint8Array }
   | { type: 'sectionLight'; cx: number; cz: number; sy: number; sky: Uint8Array; block: Uint8Array }
-  | { type: 'mesh'; key: number; sx: number; sy: number; sz: number; layers: [ArrayBuffer, ArrayBuffer, ArrayBuffer]; quads: [number, number, number]; centers: Float32Array }
+  | { type: 'mesh'; key: number; sx: number; sy: number; sz: number; layers: [ArrayBuffer, ArrayBuffer, ArrayBuffer]; quads: [number, number, number]; centers: Float32Array; vis: number }
   | { type: 'unload'; cx: number; cz: number; keys: number[] }
   | { type: 'progress'; loaded: number; pending: number }
   | { type: 'saved' }

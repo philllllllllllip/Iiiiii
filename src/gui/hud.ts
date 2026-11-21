@@ -12,8 +12,58 @@ export class Hud {
   private lastHealth = 20; private healthBlinkUntil = 0; private displayHealth = 20; private lastHealthTime = 0;
   constructor(readonly g: GuiRenderer, readonly game: Game) {}
 
+  private vignette = 1;
+  chat: { text: string; time: number }[] = [];
+  /** Gui.renderVignette + ScreenEffectRenderer.renderWater (drawn even with the HUD hidden). */
+  renderEffects(): void {
+    const g = this.g, game = this.game, p = game.player, gl = g.gl;
+    const w = g.width, h = g.height;
+    if (p.eyeInWater) {
+      const t = g.texture('misc/underwater.png');
+      if (t) {
+        const [bl, sky] = game.lightAt(Math.floor(p.x), Math.floor(p.y + p.eyeHeight), Math.floor(p.z));
+        const b = Math.max(bl, sky) / 240;
+        const u = -p.yaw / 64, v = p.pitch / 64;
+        g.blitL(t, 0, 0, w, h, (u + 0) * 16, (v + 0) * 16, 16 * 4, 16 * 4, 16, 16, ((26 << 24) | (Math.round(b * 255) << 16) | (Math.round(b * 255) << 8) | Math.round(b * 255)) >>> 0);
+        g.flush();
+      }
+    }
+    if (this.hidden) return;
+    // vignette: darkness eases towards 1 - local brightness (0.01 per frame)
+    const [, sky] = game.lightAt(Math.floor(p.x), Math.floor(p.y + p.eyeHeight), Math.floor(p.z));
+    const target = Math.max(0, Math.min(1, 1 - sky / 240));
+    this.vignette += (target - this.vignette) * 0.01;
+    const vt = g.texture('misc/vignette.png');
+    if (vt) {
+      g.flush();
+      gl.blendFuncSeparate(gl.ZERO, gl.ONE_MINUS_SRC_COLOR, gl.ONE, gl.ZERO);
+      const c = Math.round(this.vignette * 255);
+      g.blitL(vt, 0, 0, w, h, 0, 0, 256, 256, 256, 256, (0xff000000 | (c << 16) | (c << 8) | c) >>> 0);
+      g.flush();
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    }
+  }
+
+  /** ChatComponent: last 10 lines, fade after 200 ticks (opacity (1 - age/200)*10 clamp). */
+  renderChat(open: boolean): void {
+    const g = this.g, now = this.game.tickNo;
+    const lines = this.chat.slice(-(open ? 20 : 10));
+    let y = g.height - 40;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i];
+      const age = now - l.time;
+      let a = open ? 1 : Math.max(0, Math.min(1, (1 - age / 200) * 10));
+      a = a * a;
+      if (a <= 0.02) continue;
+      g.fill(0, y - 1, 320 + 4, y + 8, ((Math.round(a * 0.5 * 255) << 24) >>> 0));
+      g.text(l.text, 2, y, ((Math.round(a * 255) << 24) | 0xffffff) >>> 0);
+      y -= 9;
+    }
+  }
+
   render(): void {
     const g = this.g, game = this.game, p = game.player;
+    this.renderEffects();
     if (this.hidden) return;
     const w = g.width, h = g.height;
     const cx = w / 2;
@@ -51,6 +101,7 @@ export class Hud {
         g.text(name, (w - tw) / 2, y, ((alpha << 24) | 0xffffff) >>> 0);
       }
     }
+    this.renderChat(false);
     this.renderDebug();
   }
 

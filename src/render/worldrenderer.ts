@@ -14,7 +14,7 @@ import type { Biomes } from '../world/biomes';
 
 export interface Camera { x: number; y: number; z: number; yaw: number; pitch: number; fov: number; roll?: number; bob?: M4 }
 
-export interface RenderOptions { renderDistance: number; gamma: number; clouds: 'off' | 'fast' | 'fancy'; cloudRange?: number }
+export interface RenderOptions { renderDistance: number; gamma: number; clouds: 'off' | 'fast' | 'fancy'; cloudRange?: number; shadows?: boolean }
 
 export class WorldRenderer {
   readonly textures: BlockTextures;
@@ -123,8 +123,35 @@ export class WorldRenderer {
       rain: this.rain, belowHorizon: cam.y - 63 < 0,
     }, fogP);
     this.frustum.set(mul(this.proj, view));
+    // optional sun shadow cascade (not vanilla): ortho box around the camera, range tied to render distance
+    this.terrain.shadowsOn = !!opts.shadows && this.dimension === 'overworld';
+    if (this.terrain.shadowsOn) {
+      const sunUp = Math.cos((sunAngle * Math.PI) / 180);
+      const R = Math.min(rd, 128);
+      // sun direction = rotY(-90)·rotX(sunAngle)·(0,1,0) = (-sin a, cos a, 0); at night use the moon (opposite)
+      const ar = (sunAngle * Math.PI) / 180;
+      let bx = -Math.sin(ar), by = Math.cos(ar);
+      if (sunUp < 0) { bx = -bx; by = -by; }
+      // view basis: right=(0,0,1), up=(by,-bx,0), back=light direction; ortho half-extent R, depth ±256
+      const texel = (2 * R) / 2048;
+      const ux = by, uy = -bx;
+      const mat = new Float32Array(16);
+      mat[2] = -bx / 256; mat[6] = -by / 256; mat[10] = 0; mat[14] = 0;
+      mat[0] = 0; mat[4] = 0; mat[8] = 1 / R;
+      mat[1] = ux / R; mat[5] = uy / R; mat[9] = 0;
+      mat[15] = 1;
+      // snap the camera-relative origin to whole shadow texels so edges do not crawl while moving
+      const ox = cam.z, oy = ux * cam.x + uy * cam.y;
+      mat[12] = (ox - Math.floor(ox / texel) * texel) / R;
+      mat[13] = (oy - Math.floor(oy / texel) * texel) / R;
+      // snap to texels to keep shadows stable while moving
+      this.terrain.shadow && (this.terrain.shadow.strength = 0.45 * Math.min(1, Math.abs(sunUp) * 4) * (sunUp < 0 ? 0.3 : 1));
+      this.terrain.renderShadow(mat, [cam.x, cam.y, cam.z], this.textures.arrays, (s) => Math.abs(s.x + 8 - cam.x) < R + 16 && Math.abs(s.z + 8 - cam.z) < R + 16);
+      gl.viewport(0, 0, width, height);
+    }
     const cp: [number, number, number] = [cam.x, cam.y, cam.z];
     const maxD2 = (rd + 24) * (rd + 24);
+    this.terrain.frustumBox = (x, y, z) => this.frustum.box(x, y, z, x + 16, y + 16, z + 16) && (x + 8) * (x + 8) + (z + 8) * (z + 8) <= maxD2;
     this.sectionsDrawn = this.terrain.draw(this.proj, view, cp, fogP, this.textures.arrays, this.lightmap.tex, (s) => {
       const x0 = s.x - cam.x, y0 = s.y - cam.y, z0 = s.z - cam.z;
       const dx = x0 + 8, dz = z0 + 8;

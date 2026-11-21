@@ -76,10 +76,18 @@ Silence is a bug: if you find a difference not listed here, it is a defect.
 * **Enchanting, brewing, anvil, smithing, loom, stonecutter** containers are not implemented yet.
 * XP orbs are granted directly instead of spawning orb entities.
 
+## Entities / effects
+* Only a subset of mobs exists (zombie, skeleton, creeper, spider, pig, cow, sheep, chicken). Other
+  vanilla mobs, villagers, iron golems and passive breeding are not implemented.
+* Entity model geometry is ported from the Java model classes by hand; minor UV/pivot offsets may differ.
+* Mob AI is a simplified goal set (no full Brain/Goal selector); pathfinding is a bounded A*.
+* Shadows are a non-vanilla option (vanilla Java has none); off by default so the default image matches.
+* Weather (rain/snow/thunder) is not rendered; /weather only changes state.
+* Empty-hand first-person arm is not rendered.
+
 ## Known defects (to fix, not intended deviations)
 * Nether generation shows isolated floating netherrack blocks (see shots/nether2.png, nether3.png);
   vanilla terrain has none. Root cause not yet found (density interpolation or carver suspected).
 * Some village pieces float or sit off the terrain; terrain adaptation (beardifier) is not applied.
 * Shipwrecks sit higher than vanilla (placement height approximation).
 * Sunset/sunrise fan shows hard wedge edges against the sky disc (see shots/sunset.png).
-* No frustum culling yet; all loaded sections are drawn.

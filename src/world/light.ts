@@ -20,6 +20,26 @@ export class LightEngine {
   private ql = new Uint8Array(1 << 20);
   constructor(readonly world: World, readonly info: BlockInfo) {}
 
+  /** sections whose light changed during the current operation: chunkKey*32 + section index */
+  private touched = new Set<number>();
+  private lc: Chunk | undefined; private lcx = NaN; private lcz = NaN;
+  private chunk(cx: number, cz: number): Chunk | undefined {
+    if (cx !== this.lcx || cz !== this.lcz) { this.lc = this.world.getChunk(cx, cz); this.lcx = cx; this.lcz = cz; }
+    return this.lc;
+  }
+  /** Mark touched sections (and their neighbours, whose AO/smooth light samples them) for remeshing. */
+  private flushDirty(): void {
+    for (const k of this.touched) {
+      const si = k % 32, ck = Math.floor(k / 32);
+      const cx = Math.floor(ck / 65536) - 32768, cz = (ck % 65536) - 32768;
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) {
+        const ns = si + dy; if (ns < 0 || ns >= 24) continue;
+        this.world.dirtySections.add(((cx + dx + 32768) * 65536 + (cz + dz + 32768)) * 32 + ns);
+      }
+    }
+    this.touched.clear();
+  }
+
   private arr(c: Chunk, ch: Channel, y: number): Uint8Array {
     const s = c.sections[(y - MIN_Y) >> 4];
     return ch === 0 ? s.sky : s.block;
@@ -27,14 +47,20 @@ export class LightEngine {
   private get(ch: Channel, x: number, y: number, z: number): number {
     if (y < MIN_Y) return 0;
     if (y >= TOP) return ch === 0 && this.skylight ? 15 : 0;
-    const c = this.world.getChunk(x >> 4, z >> 4);
+    const c = this.chunk(x >> 4, z >> 4);
     if (!c) return -1;
     return this.arr(c, ch, y)[idx(x & 15, (y - MIN_Y) & 15, z & 15)];
   }
   private set(ch: Channel, x: number, y: number, z: number, v: number): void {
-    const c = this.world.getChunk(x >> 4, z >> 4)!;
+    const c = this.chunk(x >> 4, z >> 4)!;
     this.arr(c, ch, y)[idx(x & 15, (y - MIN_Y) & 15, z & 15)] = v;
-    this.world.markDirty(x, y, z);
+    this.touched.add(((c.cx + 32768) * 65536 + (c.cz + 32768)) * 32 + ((y - MIN_Y) >> 4));
+  }
+
+  private stateAt(x: number, y: number, z: number): number {
+    if (y < MIN_Y || y >= TOP) return 0;
+    const c = this.chunk(x >> 4, z >> 4);
+    return c ? c.get(x & 15, y, z & 15) : 0;
   }
 
   /** Can light pass from state a to neighbour state b across direction d? */
@@ -50,19 +76,19 @@ export class LightEngine {
 
   private propagate(ch: Channel, head: number, tail: number): void {
     const { qx, qy, qz, ql } = this;
-    const info = this.info; const world = this.world;
+    const info = this.info;
     const cap = qx.length - 1;
     while (head !== tail) {
       const x = qx[head], y = qy[head], z = qz[head], l = ql[head];
       head = (head + 1) & cap;
       if (this.get(ch, x, y, z) !== l) continue; // superseded
-      const s = world.getState(x, y, z);
+      const s = this.stateAt(x, y, z);
       for (let d = 0; d < 6; d++) {
         const nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
         if (ny < MIN_Y || ny >= TOP) continue;
         const cur = this.get(ch, nx, ny, nz);
         if (cur < 0) continue;
-        const t = world.getState(nx, ny, nz);
+        const t = this.stateAt(nx, ny, nz);
         const lb = info.lightBlock[t];
         if (lb >= 15) continue;
         let nl: number;
@@ -80,6 +106,7 @@ export class LightEngine {
 
   /** Full initial light for a freshly generated chunk, also pulling light in from lit neighbours. */
   lightChunk(c: Chunk): void {
+    this.lcx = NaN;
     const info = this.info;
     const bx = c.cx << 4, bz = c.cz << 4;
     const { qx, qy, qz, ql } = this;
@@ -131,6 +158,8 @@ export class LightEngine {
     tail = this.seedFromNeighbours(c, 1, tail);
     this.propagate(1, 0, tail);
     c.lit = true;
+    this.touched.add(((c.cx + 32768) * 65536 + (c.cz + 32768)) * 32);
+    this.flushDirty();
   }
 
   private lightBlockOnly(c: Chunk): void {
@@ -148,6 +177,7 @@ export class LightEngine {
     tail = this.seedFromNeighbours(c, 1, tail);
     this.propagate(1, 0, tail);
     c.lit = true;
+    this.flushDirty();
   }
 
   private seedFromNeighbours(c: Chunk, ch: Channel, tail: number): number {
@@ -172,7 +202,9 @@ export class LightEngine {
 
   /** Incremental relight after a block at (x,y,z) changed. */
   onBlockChanged(x: number, y: number, z: number): void {
+    this.lcx = NaN;
     for (const ch of (this.skylight ? [0, 1] : [1]) as Channel[]) this.relight(ch, x, y, z);
+    this.flushDirty();
   }
 
   private relight(ch: Channel, x: number, y: number, z: number): void {

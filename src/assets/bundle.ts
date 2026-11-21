@@ -46,6 +46,7 @@ export interface Bundle {
   lootTables: Record<string, any>;
   recipes: Record<string, any>;
   splashes: string;
+  particleDefs: Record<string, string[]>;
 }
 
 export async function loadBundle(progress?: (done: number, total: number) => void): Promise<Bundle> {
@@ -72,6 +73,7 @@ export async function loadBundle(progress?: (done: number, total: number) => voi
     lootTables: loadJson('data/loot_tables.json'),
     recipes: loadJson('data/recipes.json'),
     splashes: loadText('texts/splashes.txt'),
+    particleDefs: loadJson('particles.json'),
   };
   const keys = Object.keys(tasks);
   let done = 0;

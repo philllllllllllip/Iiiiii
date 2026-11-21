@@ -221,7 +221,7 @@ function meshStep() {
     const c = world.getChunk(s.x, s.z)!;
     const sec = c.sections[s.y - MIN_Y / 16];
     post({ type: 'sectionLight', cx: s.x, cz: s.z, sy: s.y, sky: sec.sky.slice(), block: sec.block.slice() });
-    post({ type: 'mesh', key: s.k, sx: s.x, sy: s.y, sz: s.z, layers: m.layers, quads: m.quads, centers: m.centers }, [...m.layers, m.centers.buffer]);
+    post({ type: 'mesh', key: s.k, sx: s.x, sy: s.y, sz: s.z, layers: m.layers, quads: m.quads, centers: m.centers, vis: m.vis }, [...m.layers, m.centers.buffer]);
   }
   if (meshQueue.size) scheduleMesh();
 }
