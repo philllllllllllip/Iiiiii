@@ -56,9 +56,16 @@ Silence is a bug: if you find a difference not listed here, it is a defect.
   woodland mansion (all code-built in vanilla). Mineshafts and strongholds are simplified procedural
   versions; stronghold placement ignores preferred biomes. Jigsaw terrain adaptation (beardifier) is
   not applied, entities in templates (villagers etc.) are not spawned.
+* **Dimensions**: Nether and End terrain come from the 26.3 noise settings + material rules, but
+  nether/end features (fungi, deltas, chorus, end spikes, gateways) and their structures (fortresses,
+  bastions, end cities) are not generated; portals between dimensions are not implemented yet.
 * **Spawn point**: nearest dry, non-ocean column spiralling from 0,0 (vanilla uses spawn_target
   climate search).
 
 ## Known defects (to fix, not intended deviations)
+* Nether generation shows isolated floating netherrack blocks (see shots/nether2.png, nether3.png);
+  vanilla terrain has none. Root cause not yet found (density interpolation or carver suspected).
+* Some village pieces float or sit off the terrain; terrain adaptation (beardifier) is not applied.
+* Shipwrecks sit higher than vanilla (placement height approximation).
 * Sunset/sunrise fan shows hard wedge edges against the sky disc (see shots/sunset.png).
 * No frustum culling yet; all loaded sections are drawn.

@@ -1,12 +1,13 @@
 // Messages between main thread, world worker and generation workers.
 import type { BlocksJson, ModelsJson } from '../assets/types';
 import type { RGBAImage } from '../assets/png';
-import type { WorldType } from '../worldgen/generator';
+import type { WorldType, Dimension } from '../worldgen/generator';
 
 export interface WorldConfig {
   seed: string; // bigint as decimal string
   type: WorldType; singleBiome?: string; structures: boolean; bonusChest: boolean;
   flatPreset?: string;
+  dimension?: Dimension;
 }
 
 export interface StaticData {

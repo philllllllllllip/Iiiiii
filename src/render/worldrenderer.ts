@@ -22,7 +22,10 @@ export class WorldRenderer {
   readonly sky: SkyRenderer;
   readonly clouds: CloudRenderer;
   readonly lightmap: Lightmap;
-  readonly env: Environment;
+  env: Environment;
+  dimension: 'overworld' | 'the_nether' | 'the_end' = 'overworld';
+  endSky: RGBAImage | null = null;
+  private bundle: Bundle;
   private frustum = new Frustum();
   proj: M4 = new Float32Array(16);
   view: M4 = new Float32Array(16);
@@ -40,6 +43,13 @@ export class WorldRenderer {
     this.clouds = new CloudRenderer(gl, cloudsTex);
     this.lightmap = new Lightmap(gl);
     this.env = new Environment(b.timelines as any, b.dimensionTypes['overworld']);
+    this.bundle = b;
+  }
+
+  setDimension(dim: 'overworld' | 'the_nether' | 'the_end', endSky?: RGBAImage): void {
+    this.dimension = dim;
+    this.env = new Environment(this.bundle.timelines as any, this.bundle.dimensionTypes[dim]);
+    if (endSky) this.endSky = endSky;
   }
 
   tick(): void { this.textures.tick(); this.lightmap.tick(); }
@@ -57,7 +67,15 @@ export class WorldRenderer {
     const rd = rdChunks * 16;
     let fog: number[];
     let fogP: FogParams;
-    if (this.underwater) {
+    if (this.dimension !== 'overworld') {
+      fog = fogBase.slice(0, 3);
+      const nether = this.dimension === 'the_nether';
+      fogP = {
+        color: [fog[0], fog[1], fog[2], 1],
+        envStart: nether ? env.num('minecraft:visual/fog_start_distance', t, bAttrs) : 1e9, envEnd: nether ? env.num('minecraft:visual/fog_end_distance', t, bAttrs) : 1e9 + 1,
+        rdStart: rd - Math.min(64, Math.max(4, rd / 10)), rdEnd: rd, skyEnd: rd, cloudsEnd: 0,
+      };
+    } else if (this.underwater) {
       const wf = env.color('minecraft:visual/water_fog_color', t, bAttrs);
       fog = [wf[0], wf[1], wf[2]];
       fogP = { color: [fog[0], fog[1], fog[2], 1], envStart: env.num('minecraft:visual/water_fog_start_distance', t, bAttrs), envEnd: env.num('minecraft:visual/water_fog_end_distance', t, bAttrs), rdStart: rd, rdEnd: rd, skyEnd: rd, cloudsEnd: 0 };
@@ -78,7 +96,7 @@ export class WorldRenderer {
       };
     }
     // void darkening below the horizon (FogRenderer: darken fog colour when the camera is below y=63)
-    if (cam.y < 63 && !this.underwater) {
+    if (cam.y < 63 && !this.underwater && this.dimension === 'overworld') {
       const d = Math.max(0, Math.min(1, (cam.y - (-64)) / (63 - -64)));
       for (let i = 0; i < 3; i++) fog[i] *= d * d;
       fogP.color = [fog[0], fog[1], fog[2], 1];
@@ -97,7 +115,8 @@ export class WorldRenderer {
     let view = viewRotation(cam.yaw, cam.pitch);
     if (cam.bob) view = mul(cam.bob, view);
     this.view = view;
-    if (!this.underwater) this.sky.draw(this.proj, view, {
+    if (this.dimension === 'the_end' && this.endSky) this.sky.drawEnd(this.proj, view, this.endSky);
+    else if (!this.underwater && this.dimension === 'overworld') this.sky.draw(this.proj, view, {
       skyColor: skyCol, sunriseColor: sunrise, sunAngle,
       moonAngle: env.num('minecraft:visual/moon_angle', t, bAttrs), starAngle: env.num('minecraft:visual/star_angle', t, bAttrs),
       starBrightness: env.num('minecraft:visual/star_brightness', t, bAttrs), moonPhase: String(env.get('minecraft:visual/moon_phase', t, bAttrs)),
@@ -112,7 +131,7 @@ export class WorldRenderer {
       if (dx * dx + dz * dz > maxD2) return false;
       return this.frustum.box(x0, y0, z0, x0 + 16, y0 + 16, z0 + 16);
     });
-    if (opts.clouds !== 'off') {
+    if (opts.clouds !== 'off' && this.dimension === 'overworld') {
       const cc = env.color('minecraft:visual/cloud_color', t, bAttrs);
       this.clouds.draw(this.proj, view, cp, gameTime, partial, env.num('minecraft:visual/cloud_height', t, bAttrs), [cc[0] * (1 - this.rain * 0.5), cc[1] * (1 - this.rain * 0.5), cc[2] * (1 - this.rain * 0.5), cc[3]], fogP);
     }

@@ -3,7 +3,7 @@
 //   noise (+aquifer) -> biomes -> surface -> carvers -> features (needs 3x3 neighbourhood)
 import { DensityContext, type DF } from './density';
 import { Xoroshiro, type PositionalRandomFactory } from './random';
-import { overworldParameters, MultiNoiseBiomeSource } from './biomesource';
+import { overworldParameters, netherParameters, MultiNoiseBiomeSource } from './biomesource';
 import { SurfaceSystem, NO_WATER, type SurfaceColumnCtx } from './surface';
 import { Engine, Tags, type GenAccess } from './features';
 import { applyCarvers, type CarveTarget } from './carvers';
@@ -17,7 +17,8 @@ export const MIN_Y = -64, HEIGHT = 384, MAX_Y = MIN_Y + HEIGHT, SEA_LEVEL = 63;
 const IDX = (x: number, y: number, z: number) => ((y - MIN_Y) << 8) | (z << 4) | x;
 
 export type WorldType = 'normal' | 'large_biomes' | 'amplified' | 'flat' | 'single_biome';
-export interface GenOptions { seed: bigint; type: WorldType; singleBiome?: string; structures: boolean; flatPreset?: string; bonusChest?: boolean }
+export type Dimension = 'overworld' | 'the_nether' | 'the_end';
+export interface GenOptions { seed: bigint; type: WorldType; dimension?: Dimension; singleBiome?: string; structures: boolean; flatPreset?: string; bonusChest?: boolean }
 
 export class ProtoChunk {
   readonly states = new Uint16Array(16 * 16 * HEIGHT);
@@ -57,21 +58,29 @@ export class WorldGenerator {
     readonly reg: BlockRegistry, readonly biomes: Biomes, structureFiles: (path: string) => Uint8Array | null) {
     this.random = Xoroshiro.fromSeed(opts.seed).forkPositional();
     this.density = new DensityContext(worldgen, this.random, opts.seed);
-    const settingsName = opts.type === 'large_biomes' ? 'large_biomes' : opts.type === 'amplified' ? 'amplified' : 'overworld';
+    this.dimension = opts.dimension ?? 'overworld';
+    const settingsName = this.dimension === 'the_nether' ? 'nether' : this.dimension === 'the_end' ? 'end'
+      : opts.type === 'large_biomes' ? 'large_biomes' : opts.type === 'amplified' ? 'amplified' : 'overworld';
     const ns = worldgen['noise_settings/' + settingsName];
+    this.nMinY = ns.noise.min_y; this.nHeight = ns.noise.height; this.seaLevel = ns.sea_level;
+    this.defaultBlock = reg.defaultState(String(ns.default_block.Name ?? ns.default_block.id ?? ns.default_block).replace('minecraft:', ''));
+    const fl = String(ns.default_fluid.Name ?? ns.default_fluid.id ?? ns.default_fluid).replace('minecraft:', '');
+    this.defaultFluid = fl === 'air' ? 0 : reg.state(fl, { level: '0' });
     const R = ns.noise_router;
     for (const k of Object.keys(R)) this.router[k] = this.density.compile(R[k]);
     this.finalDensity = this.router.final_density;
-    for (const k of Object.keys(ns.aquifers)) this.aq[k] = this.density.compile(ns.aquifers[k]);
+    for (const k of Object.keys(ns.aquifers ?? {})) this.aq[k] = this.density.compile(ns.aquifers[k]);
+    this.hasAquifers = !!ns.aquifers;
     // aquifer surface_level is the preliminary surface; vanilla samples it through the 16-block
     // interpolated chunk_surface_level, which we use for per-column queries
     this.prelimSurface = this.router.chunk_surface_level ?? this.aq.surface_level;
-    this.biomeSource = opts.type === 'single_biome' || opts.type === 'flat' ? null : new MultiNoiseBiomeSource(overworldParameters(), (n) => biomes.id(n));
+    this.biomeSource = opts.type === 'single_biome' || opts.type === 'flat' || this.dimension === 'the_end' ? null
+      : new MultiNoiseBiomeSource(this.dimension === 'the_nether' ? netherParameters() : overworldParameters(), (n) => biomes.id(n));
     if (opts.type === 'single_biome') this.singleBiome = biomes.id(opts.singleBiome ?? 'plains');
     this.tags = new Tags(tagsJson, reg);
     this.surface = new SurfaceSystem({
       worldgen, density: this.density, random: this.random, biomeId: (n) => biomes.id(n),
-      state: (id, props) => reg.state(id.replace('minecraft:', ''), props ?? {}), minY: MIN_Y, height: HEIGHT,
+      state: (id, props) => reg.state(id.replace('minecraft:', ''), props ?? {}), minY: this.nMinY, height: this.nHeight,
     }, ns.material_rule);
     this.surfaceNoise = this.density.noise('surface');
     this.secondaryNoise = this.density.noise('surface_secondary');
@@ -98,6 +107,11 @@ export class WorldGenerator {
     this.structures = new StructureManager(this, structureFiles);
   }
 
+  readonly dimension: Dimension;
+  readonly nMinY: number; readonly nHeight: number; readonly seaLevel: number;
+  readonly defaultBlock: number; readonly defaultFluid: number;
+  private hasAquifers = true;
+
   /** Biome.getTemperature with the height adjustment above y=80. */
   temperature(b: number, x: number, y: number, z: number): number {
     const def = this.biomes.list[b];
@@ -111,8 +125,17 @@ export class WorldGenerator {
   }
 
   /** Climate sample + nearest biome at quart coordinates. */
+  /** TheEndBiomeSource.getNoiseBiome */
+  endBiome(qx: number, qz: number): number {
+    const i = qx >> 2, k = qz >> 2;
+    if (i * i + k * k <= 4096) return this.biomes.id('the_end');
+    const d = this.router.erosion((i * 2 + 1) * 8, 0, (k * 2 + 1) * 8);
+    return this.biomes.id(d > 0.25 ? 'end_highlands' : d >= -0.0625 ? 'end_midlands' : d < -0.21875 ? 'small_end_islands' : 'end_barrens');
+  }
+
   biomeAt(qx: number, qy: number, qz: number): number {
     if (this.singleBiome >= 0) return this.singleBiome;
+    if (this.dimension === 'the_end') return this.endBiome(qx, qz);
     const x = qx << 2, y = qy << 2, z = qz << 2;
     const R = this.router;
     void y;
@@ -122,6 +145,7 @@ export class WorldGenerator {
   /** Biomes for one quart column: y-independent climate sampled once, depth per quart y. */
   biomeColumn(qx: number, qz: number): (qy: number) => number {
     if (this.singleBiome >= 0) { const b = this.singleBiome; return () => b; }
+    if (this.dimension === 'the_end') { const b = this.endBiome(qx, qz); return () => b; }
     const x = qx << 2, z = qz << 2;
     const R = this.router;
     const search = this.biomeSource!.column(R.temperature(x, 0, z), R.vegetation(x, 0, z), R.continents(x, 0, z), R.erosion(x, 0, z), R.ridges(x, 0, z));
@@ -143,13 +167,15 @@ export class WorldGenerator {
       const col = this.biomeColumn((bx >> 2) + qx, (bz >> 2) + qz);
       for (let qy = 0; qy < HEIGHT / 4; qy++) c.biomes[(qy << 4) | (qz << 2) | qx] = col((MIN_Y >> 2) + qy);
     }
-    const stone = this.S.stone, water = this.S.water, lava = this.S.lava;
+    const stone = this.defaultBlock, water = this.S.water, lava = this.S.lava;
+    const top = this.nMinY + this.nHeight;
     for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
       const X = bx + x, Z = bz + z;
       const surf = this.prelimSurface(X, 0, Z);
-      for (let y = MAX_Y - 1; y >= MIN_Y; y--) {
+      for (let y = top - 1; y >= this.nMinY; y--) {
         const d = this.finalDensity(X, y, Z);
         if (d > 0) { c.states[IDX(x, y, z)] = stone; continue; }
+        if (!this.hasAquifers) { if (y < this.seaLevel && this.defaultFluid) c.states[IDX(x, y, z)] = this.defaultFluid; continue; }
         const f = this.fluidAt(X, y, Z, surf);
         if (f) c.states[IDX(x, y, z)] = f === 1 ? water : lava;
       }
@@ -188,6 +214,7 @@ export class WorldGenerator {
    * centre; a position takes the level of the nearest centre. Returns 0 air, 1 water, 2 lava.
    */
   fluidAt(x: number, y: number, z: number, surfaceLevel?: number): number {
+    if (!this.hasAquifers) return y < this.seaLevel ? (this.defaultFluid === this.S.lava ? 2 : this.defaultFluid ? 1 : 0) : 0;
     const surf = surfaceLevel ?? this.prelimSurface(x, 0, z);
     if (y >= surf - 12 || this.opts.type === 'flat') return y < SEA_LEVEL ? 1 : 0;
     if (y < MIN_Y + 10) return 2;
@@ -203,7 +230,7 @@ export class WorldGenerator {
 
   private buildSurface(c: ProtoChunk): void {
     const bx = c.cx * 16, bz = c.cz * 16;
-    const stone = this.S.stone;
+    const stone = this.defaultBlock;
     const heights = new Int16Array(256);
     for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
       let y = MAX_Y - 1;
@@ -244,7 +271,7 @@ export class WorldGenerator {
     const names = new Set<string>();
     for (const b of biomeSet) for (const n of this.worldgen['biome/' + this.biomes.list[b].name].carvers ?? []) names.add(n);
     const list: [string, any][] = [...this.carvers].filter(([n]) => names.has(n));
-    const repl = this.tags.block('overworld_carver_replaceables');
+    const repl = this.tags.block(this.dimension === 'the_nether' ? 'nether_carver_replaceables' : 'overworld_carver_replaceables');
     const t: CarveTarget = {
       cx: c.cx, cz: c.cz, minY: MIN_Y, height: HEIGHT,
       get: (x, y, z) => c.get(x, y, z), set: (x, y, z, s) => c.set(x, y, z, s),

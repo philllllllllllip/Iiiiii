@@ -187,8 +187,9 @@ export class StructureManager {
     const n = readNbt(bytes) as any;
     const palette: any[] = n.palette ?? (n.palettes ? n.palettes[0] : []);
     const states = palette.map((p: any) => {
-      const name = String(p.Name).replace('minecraft:', '');
-      try { return this.reg.state(name, Object.fromEntries(Object.entries(p.Properties ?? {}).filter(([k]) => { try { return this.reg.hasProp(this.reg.defaultState(name), k); } catch { return false; } }).map(([k, v]) => [k, String(v)]))); } catch { return -1; }
+      // 26.3 templates use {id, properties}; older ones {Name, Properties}
+      const name = String(p.id ?? p.Name).replace('minecraft:', '');
+      try { return this.reg.state(name, Object.fromEntries(Object.entries(p.properties ?? p.Properties ?? {}).filter(([k]) => { try { return this.reg.hasProp(this.reg.defaultState(name), k); } catch { return false; } }).map(([k, v]) => [k, String(v)]))); } catch { return -1; }
     });
     const blocks: Template['blocks'] = [];
     for (const b of n.blocks as any[]) {

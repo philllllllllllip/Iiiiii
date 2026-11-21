@@ -25,7 +25,7 @@ self.onmessage = (e: MessageEvent<ToGen>) => {
     if (m.type === 'init') {
       const reg = new BlockRegistry(m.blocks);
       const biomes = new Biomes(m.worldgen, m.grass, m.foliage, m.dryFoliage);
-      gen = new WorldGenerator({ seed: BigInt(m.config.seed), type: m.config.type, singleBiome: m.config.singleBiome, structures: m.config.structures, flatPreset: m.config.flatPreset, bonusChest: m.config.bonusChest },
+      gen = new WorldGenerator({ seed: BigInt(m.config.seed), type: m.config.type, dimension: m.config.dimension, singleBiome: m.config.singleBiome, structures: m.config.structures, flatPreset: m.config.flatPreset, bonusChest: m.config.bonusChest },
         m.worldgen, m.tags, reg, biomes, (p) => fetchSync(m.structureBase + p));
       post({ type: 'ready' });
     } else if (m.type === 'proto') {

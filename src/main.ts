@@ -29,9 +29,11 @@ async function main(): Promise<void> {
   const client = new WorldClient(wr.terrain);
   client.onError = fatal;
   const rd = +(q.get('rd') ?? 8);
-  await client.init(data, { seed: q.get('seed') ?? '12345', type: (q.get('type') as any) ?? 'normal', structures: true, bonusChest: false }, 'phase3-' + (q.get('seed') ?? '12345'), true, 2);
+  const dim = (q.get('dim') as any) ?? 'overworld';
+  wr.setDimension(dim, await loadPng('textures/environment/end_sky.png'));
+  await client.init(data, { seed: q.get('seed') ?? '12345', type: (q.get('type') as any) ?? 'normal', structures: true, bonusChest: false, dimension: dim }, 'phase3-' + (q.get('seed') ?? '12345'), true, 2);
   const sp = client.spawn!;
-  const cam = { x: +(q.get('x') ?? sp[0]), y: +(q.get('y') ?? sp[1] + 20), z: +(q.get('z') ?? sp[2]), yaw: +(q.get('yaw') ?? 0), pitch: +(q.get('pitch') ?? 20), fov: 70 };
+  const cam = { x: +(q.get('x') ?? sp[0]), y: +(q.get('y') ?? sp[1] + (dim === 'overworld' ? 20 : 2)), z: +(q.get('z') ?? sp[2]), yaw: +(q.get('yaw') ?? 0), pitch: +(q.get('pitch') ?? 20), fov: 70 };
   let gameTime = +(q.get('time') ?? 6000);
   const keys = new Set<string>();
   window.addEventListener('keydown', (e) => keys.add(e.code));

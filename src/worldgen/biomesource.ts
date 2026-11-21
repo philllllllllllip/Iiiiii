@@ -195,6 +195,13 @@ export function overworldParameters(): ParamPoint[] {
   return out;
 }
 
+/** MultiNoiseBiomeSourceParameterList.Preset.NETHER */
+export function netherParameters(): ParamPoint[] {
+  const z: P = [0, 0];
+  const pt2 = (t: number, h: number, off: number, biome: string): ParamPoint => ({ t: [t, t], h: [h, h], c: z, e: z, d: z, w: z, offset: off, biome });
+  return [pt2(0, 0, 0, 'nether_wastes'), pt2(0, -0.5, 0, 'soul_sand_valley'), pt2(0.4, 0, 0, 'crimson_forest'), pt2(0, 0.5, 0.375, 'warped_forest'), pt2(-0.5, 0, 0.175, 'basalt_deltas')];
+}
+
 const Q = (v: number) => Math.round(v * 10000); // Climate.quantizeCoord
 
 interface QPoint { r: Int32Array; offset: number; biome: number }

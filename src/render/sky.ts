@@ -182,6 +182,33 @@ export class SkyRenderer {
     gl.bindVertexArray(null);
   }
 
+  private endTex: WebGLTexture | null = null;
+  /** SkyRenderer.renderEndSky: six faces of a 100-block cube, end_sky.png tiled 16x, colour #282828. */
+  drawEnd(proj: M4, viewRot: M4, img: RGBAImage): void {
+    const gl = this.gl;
+    if (!this.endTex) {
+      this.endTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.endTex);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, img.width, img.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img.data);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    }
+    gl.disable(gl.CULL_FACE); gl.depthMask(false); gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    const tp = this.tex.use();
+    tp.m4('ProjMat', proj); tp.i('Sampler0', 0);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.endTex);
+    tp.v4('ColorModulator', 40 / 255, 40 / 255, 40 / 255, 1);
+    const faces = [mul(viewRot, rotX(0)), mul(viewRot, rotX(90)), mul(viewRot, rotX(-90)), mul(viewRot, rotX(180)), mul(viewRot, rotZ(90)), mul(viewRot, rotZ(-90))];
+    const d = new Float32Array([-100, -100, -100, 0, 0, -100, -100, 100, 0, 16, 100, -100, 100, 16, 16, 100, -100, 100, 16, 16, 100, -100, -100, 16, 0, -100, -100, -100, 0, 0]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf); gl.bufferData(gl.ARRAY_BUFFER, d, gl.STREAM_DRAW);
+    gl.bindVertexArray(this.quadVao);
+    for (const m of faces) { tp.m4('ModelViewMat', m); gl.drawArrays(gl.TRIANGLES, 0, 6); }
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+    gl.bindVertexArray(null);
+  }
+
   private celestial(p: Program, m: M4, sprite: string, size: number): void {
     const sp = this.atlas.sprites[sprite];
     if (!sp) throw new Error('celestial sprite missing: ' + sprite);

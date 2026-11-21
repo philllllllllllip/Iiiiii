@@ -14,6 +14,8 @@ const TOP = MIN_Y + HEIGHT;
 type Channel = 0 | 1; // 0 sky, 1 block
 
 export class LightEngine {
+  /** false for dimensions without skylight (the Nether) */
+  skylight = true;
   private qx = new Int32Array(1 << 20); private qy = new Int32Array(1 << 20); private qz = new Int32Array(1 << 20);
   private ql = new Uint8Array(1 << 20);
   constructor(readonly world: World, readonly info: BlockInfo) {}
@@ -24,7 +26,7 @@ export class LightEngine {
   }
   private get(ch: Channel, x: number, y: number, z: number): number {
     if (y < MIN_Y) return 0;
-    if (y >= TOP) return ch === 0 ? 15 : 0;
+    if (y >= TOP) return ch === 0 && this.skylight ? 15 : 0;
     const c = this.world.getChunk(x >> 4, z >> 4);
     if (!c) return -1;
     return this.arr(c, ch, y)[idx(x & 15, (y - MIN_Y) & 15, z & 15)];
@@ -84,6 +86,7 @@ export class LightEngine {
     // --- sky: direct column fill
     const skyTop = new Int16Array(256); // lowest y that has full sky light
     for (const s of c.sections) { s.sky.fill(0); s.block.fill(0); }
+    if (!this.skylight) { this.lightBlockOnly(c); return; }
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       let y = TOP - 1;
       for (; y >= MIN_Y; y--) {
@@ -130,6 +133,23 @@ export class LightEngine {
     c.lit = true;
   }
 
+  private lightBlockOnly(c: Chunk): void {
+    const { qx, qy, qz, ql } = this; const info = this.info;
+    const bx = c.cx << 4, bz = c.cz << 4;
+    let tail = 0;
+    for (let si = 0; si < c.sections.length; si++) {
+      const sec = c.sections[si];
+      if (sec.nonAir === 0) continue;
+      for (let i = 0; i < 4096; i++) {
+        const e = info.emission[sec.states[i]];
+        if (e > 0) { sec.block[i] = e; qx[tail] = bx + (i & 15); qy[tail] = MIN_Y + si * 16 + (i >> 8); qz[tail] = bz + ((i >> 4) & 15); ql[tail] = e; tail++; }
+      }
+    }
+    tail = this.seedFromNeighbours(c, 1, tail);
+    this.propagate(1, 0, tail);
+    c.lit = true;
+  }
+
   private seedFromNeighbours(c: Chunk, ch: Channel, tail: number): number {
     const { qx, qy, qz, ql } = this;
     const bx = c.cx << 4, bz = c.cz << 4;
@@ -152,7 +172,7 @@ export class LightEngine {
 
   /** Incremental relight after a block at (x,y,z) changed. */
   onBlockChanged(x: number, y: number, z: number): void {
-    for (const ch of [0, 1] as Channel[]) this.relight(ch, x, y, z);
+    for (const ch of (this.skylight ? [0, 1] : [1]) as Channel[]) this.relight(ch, x, y, z);
   }
 
   private relight(ch: Channel, x: number, y: number, z: number): void {

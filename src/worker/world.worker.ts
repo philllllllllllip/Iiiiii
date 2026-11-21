@@ -255,6 +255,17 @@ function persistChunk(c: Chunk) {
 }
 
 function findSpawn(): [number, number, number] {
+  if (config.dimension === 'the_end') return [100.5, 49, 0.5]; // EndPlatformFeature spawn
+  if (config.dimension === 'the_nether') {
+    // first air pocket above ground at the column nearest 0,0 (portal search approximation)
+    for (let r = 0; r < 32; r++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+      const x = dx * 8, z = dz * 8;
+      const fd = (probe as any).finalDensity;
+      for (let y = 40; y < 110; y++) if (fd(x, y - 1, z) > 0 && fd(x, y, z) <= 0 && fd(x, y + 1, z) <= 0 && fd(x, y + 2, z) <= 0) return [x + 0.5, y, z + 0.5];
+    }
+    return [0.5, 70, 0.5];
+  }
   // WorldGenerator spawn search: nearest non-ocean column with a dry surface, spiralling out from 0,0
   for (let r = 0; r < 64; r++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
     if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
@@ -280,9 +291,10 @@ self.onmessage = async (e: MessageEvent<ToWorld>) => {
         biomes = new Biomes(d.worldgen, d.grass, d.foliage, d.dryFoliage);
         world = new World();
         light = new LightEngine(world, info);
+        light.skylight = config.dimension !== 'the_nether';
         mesher = new Mesher(reg, info, biomes, d.blocks, d.spriteSlots, d.spriteNames, { smoothLighting: m.smoothLighting, biomeBlend: m.biomeBlend });
-        probe = new WorldGenerator({ seed: BigInt(config.seed), type: config.type, singleBiome: config.singleBiome, structures: config.structures, flatPreset: config.flatPreset }, d.worldgen, d.tags, reg, biomes, () => null);
-        store = await WorldStore.open(m.worldId);
+        probe = new WorldGenerator({ seed: BigInt(config.seed), type: config.type, dimension: config.dimension, singleBiome: config.singleBiome, structures: config.structures, flatPreset: config.flatPreset }, d.worldgen, d.tags, reg, biomes, () => null);
+        store = await WorldStore.open(m.worldId + (config.dimension && config.dimension !== 'overworld' ? '/' + config.dimension : ''));
         for (const c of await store.allChunks()) saved.set(key(c.cx, c.cz), { states: c.states, biomes: c.biomes });
         startGenWorkers(m.genWorkers, d);
         const meta = await store.getMeta('spawn');
