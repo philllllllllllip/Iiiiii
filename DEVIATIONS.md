@@ -21,3 +21,23 @@ Silence is a bug: if you find a difference not listed here, it is a defect.
   reduction kernels live in client code that is not part of the asset dump; ours are reconstructions.
 * **Render layer assignment** is derived from sprite transparency (solid / cutout / translucent) and
   `force_translucent`, which is how current vanilla assigns `ChunkSectionLayer` from sprite contents.
+* **Environment attribute defaults.** 26.3 makes sky/fog/light colours data-driven (timelines +
+  dimension/biome attributes, all honoured), but each attribute's *default* value lives in code.
+  Reconstructed defaults are in `src/env/timeline.ts` `ATTRIBUTE_DEFAULTS` (notably
+  `block_light_tint #ffd88c`, `sky_fog_end_distance 512`, `cloud_fog_end_distance 2048`).
+* **Atmospheric (environmental) fog is disabled in clear overworld air**; only render-distance fog
+  applies. The exact AtmosphericFogEnvironment start/end formula is not in the asset dump.
+* **Translucent terrain does not write depth** (per this project's spec); vanilla writes depth for
+  the translucent chunk layer. Quads are sorted back-to-front per section, so visual difference is
+  limited to particles/clouds behind water.
+* **Sun shadow maps**: vanilla Java has none. They will ship as an option defaulting to OFF so the
+  default render matches vanilla. (Not implemented yet.)
+* **uvlock** recomputes UVs by projecting world positions with the default face UV convention;
+  exact for full faces, an approximation for faces with custom UVs.
+* **Smooth-lighting corner "open" test** checks the side neighbour in the sampled layer; vanilla's
+  exact neighbour offset for this test could not be verified from assets.
+* **Emissive rendering** (`emissiveRendering` full-bright states) is not tabled yet.
+
+## Known defects (to fix, not intended deviations)
+* Sunset/sunrise fan shows hard wedge edges against the sky disc (see shots/sunset.png).
+* No frustum culling yet; all loaded sections are drawn.

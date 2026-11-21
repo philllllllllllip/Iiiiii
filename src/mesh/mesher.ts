@@ -75,7 +75,7 @@ export class Mesher {
     spriteNames: string[],
     public opts: MesherOptions,
   ) {
-    const find = (n: string) => { const i = spriteNames.indexOf(n); if (i < 0) throw new Error('sprite missing: ' + n); return i; };
+    const find = (n: string) => { const i = spriteNames.lastIndexOf(n); if (i < 0) throw new Error('sprite missing: ' + n); return i; };
     this.waterStill = find('block/water_still'); this.waterFlow = find('block/water_flow'); this.waterOverlay = find('block/water_overlay');
     this.lavaStill = find('block/lava_still'); this.lavaFlow = find('block/lava_flow');
   }

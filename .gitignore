@@ -4,3 +4,4 @@ dist/
 public/gen/
 *.log
 .DS_Store
+*.bundle

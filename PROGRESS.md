@@ -27,7 +27,15 @@ Done (typechecks; core logic is DOM-free so it can run in workers):
 * `src/mesh/mesher.ts` smooth lighting/AO, culling, biome blend, exact-safe greedy merge, liquids.
 * 26.3 timeline data (sky/fog/cloud/light colour keyframes) now bundled to `data/timelines.json`.
 
-Remaining for Phase 2: WebGL2 layer (texture arrays + mip strategies, terrain shader port of
-terrain.vsh/fsh + sampleNearest, lightmap.fsh port), timeline evaluator, sky/sun/moon/stars,
-clouds, fog, optional shadow maps, test chunk scene + fly camera, screenshot.
+Renderer now running (shots/noon.png, sunset.png, midnight.png, headless Chromium):
+* `src/render/blocktextures.ts` texture arrays from the atlas, 26.3 mip strategies, 20 tps animation.
+* `src/render/terrain.ts` GLSL ES port of terrain.vsh/fsh + sampleNearest + sample_lightmap + fog;
+  solid / cutout / sorted translucent passes.
+* `src/render/lightmap.ts` exact lightmap.fsh port with block-light flicker.
+* `src/env/timeline.ts` evaluates 26.3 timelines (wrap-around keyframes, cubic_bezier, modifiers).
+* `src/render/sky.ts` sky disc, sunrise fan, sun, moon phases, 1500 stars (seed 10842), void disc.
+* `src/render/clouds.ts` fancy clouds from clouds.png with depth pre-pass and drift.
+* `src/demo/testscene.ts` 3x3-chunk test scene; 18 sections / 22.7k quads meshed in ~170 ms.
 
+Remaining for Phase 2: sunrise-fan edge artifact, frustum culling, optional (default-off) shadow
+maps, side-by-side comparison against a real 26.3 screenshot.
