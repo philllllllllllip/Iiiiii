@@ -1,0 +1,33 @@
+{
+  "name": "pntg-mc-client",
+  "version": "0.1.0",
+  "description": "Browser reconstruction of Minecraft Java Edition 26.3 (WebGL2, TypeScript)",
+  "scripts": {
+    "assets": "node scripts/extract-assets.mjs",
+    "assets:offline": "node scripts/extract-assets.mjs --offline",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/philllllllllllip/PNTG.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/philllllllllllip/PNTG/issues"
+  },
+  "homepage": "https://github.com/philllllllllllip/PNTG#readme",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "fflate": "^0.8.3",
+    "pngjs": "^7.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  },
+  "private": true,
+  "type": "module"
+}
