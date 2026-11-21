@@ -63,13 +63,24 @@ export function decodePng(buf: Uint8Array): RGBAImage {
     return (byte >> shift) & ((1 << depth) - 1);
   };
   const scale = depth < 8 && ctype !== 3 ? 255 / ((1 << depth) - 1) : 1;
+  // tRNS for greyscale / truecolour: a single transparent sample value at the image's bit depth
+  const rawSample = (line: Uint8Array, i: number): number => (depth === 16 ? (line[i * 2] << 8) | line[i * 2 + 1] : sample(line, i));
+  const trnsGray = ctype === 0 && trns ? (trns[0] << 8) | trns[1] : -1;
+  const trnsRgb = ctype === 2 && trns ? [(trns[0] << 8) | trns[1], (trns[2] << 8) | trns[3], (trns[4] << 8) | trns[5]] : null;
   for (let y = 0; y < height; y++) {
     const line = lines.subarray(y * stride, (y + 1) * stride);
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
       if (ctype === 6) { for (let k = 0; k < 4; k++) out[o + k] = sample(line, x * 4 + k); }
-      else if (ctype === 2) { for (let k = 0; k < 3; k++) out[o + k] = sample(line, x * 3 + k); out[o + 3] = 255; }
-      else if (ctype === 0) { const g = sample(line, x) * scale; out[o] = out[o + 1] = out[o + 2] = g; out[o + 3] = 255; }
+      else if (ctype === 2) {
+        for (let k = 0; k < 3; k++) out[o + k] = sample(line, x * 3 + k);
+        out[o + 3] = trnsRgb && rawSample(line, x * 3) === trnsRgb[0] && rawSample(line, x * 3 + 1) === trnsRgb[1] && rawSample(line, x * 3 + 2) === trnsRgb[2] ? 0 : 255;
+      }
+      else if (ctype === 0) {
+        const raw = rawSample(line, x);
+        const g = sample(line, x) * scale; out[o] = out[o + 1] = out[o + 2] = g;
+        out[o + 3] = trnsGray !== -1 && raw === trnsGray ? 0 : 255;
+      }
       else if (ctype === 4) { const g = sample(line, x * 2); out[o] = out[o + 1] = out[o + 2] = g; out[o + 3] = sample(line, x * 2 + 1); }
       else {
         const i = sample(line, x);

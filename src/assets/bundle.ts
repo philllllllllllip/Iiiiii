@@ -40,6 +40,7 @@ export interface Bundle {
   timelines: Record<string, any>;
   dimensionTypes: Record<string, any>;
   worldgen: Record<string, any>;
+  tags: Record<string, any>;
 }
 
 export async function loadBundle(progress?: (done: number, total: number) => void): Promise<Bundle> {
@@ -60,6 +61,7 @@ export async function loadBundle(progress?: (done: number, total: number) => voi
     timelines: loadJson('data/timelines.json'),
     dimensionTypes: loadJson('data/dimension_types.json'),
     worldgen: loadJson('data/worldgen.json'),
+    tags: loadJson('data/tags.json'),
   };
   const keys = Object.keys(tasks);
   let done = 0;
@@ -67,7 +69,7 @@ export async function loadBundle(progress?: (done: number, total: number) => voi
   const vals = await Promise.all(keys.map((k) => tasks[k]));
   const b = Object.fromEntries(keys.map((k, i) => [k, vals[i]])) as unknown as Bundle;
   if (b.manifest.version !== '26.3') throw new AssetError(`asset bundle is ${b.manifest.version}, expected 26.3`);
-  b.fontSheets = await Promise.all(b.font.sheets.map((s) => loadPng(s.file.startsWith('textures/') ? s.file : s.file)));
+  b.fontSheets = await Promise.all(b.font.sheets.map((s) => loadPng(s.file)));
   progress?.(keys.length + 1, keys.length + 1);
   return b;
 }

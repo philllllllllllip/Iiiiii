@@ -39,3 +39,28 @@ Renderer now running (shots/noon.png, sunset.png, midnight.png, headless Chromiu
 
 Remaining for Phase 2: sunrise-fan edge artifact, frustum culling, optional (default-off) shadow
 maps, side-by-side comparison against a real 26.3 screenshot.
+
+## Phase 3 — World generation + streaming — DONE (with listed gaps)
+
+Driven by the 26.3 worldgen data pack (data/minecraft/worldgen), not a homemade generator:
+* `worldgen/random.ts` Xoroshiro128++ / positional factories / MD5 `fromHashOf` — verified against Java.
+* `worldgen/noise.ts` ImprovedNoise, PerlinNoise (modern + legacy), NormalNoise (26.3 param format), BlendedNoise.
+* `worldgen/density.ts` interpreter for every density function type used by 26.3, incl. the new
+  `interval_select`, `find_top_surface`, `gradient`, `div`, `range_choice`; cell interpolation + caches.
+* `worldgen/biomesource.ts` multi-noise biome source (OverworldBiomeBuilder reconstruction, exact
+  nearest-point search with an O(groups) column fast path).
+* `worldgen/surface.ts` 26.3 `material_rule` interpreter incl. `ore_vein` rule and badlands bands.
+* `worldgen/carvers.ts` cave + canyon carvers (legacy random seeding as vanilla).
+* `worldgen/features.ts` placed/configured feature engine: all 18 placement modifiers, all block
+  predicates and state providers present in 26.3, trees (10 trunk / 12 foliage placers, decorators),
+  ores, patches, lakes, dungeons, springs, disks, mushrooms, bamboo, vines, glow lichen, ...
+* `worldgen/structures.ts` structure sets (random_spread / concentric_rings), jigsaw assembly from
+  template pools + .nbt templates with processors (villages, outposts, trail ruins, ancient cities,
+  trial chambers, camps), ruined portals, shipwrecks, igloos, ocean ruins, buried treasure,
+  mineshafts and strongholds (procedural, simplified).
+* World types: normal, large biomes, amplified, single biome, superflat (flat presets from data).
+* Streaming: world worker (store, light, mesh) + generation worker pool; deterministic,
+  load-order-independent decoration (isolated decoration + canonical write order).
+* Performance (Node, one core): proto ~50 ms/chunk, decoration ~80 ms/chunk.
+* Tests: same seed -> identical chunks across fresh generators (`tests/worldgen.test.ts`);
+  exact PNG decoding of all 3964 textures (`tests/png.test.ts`).

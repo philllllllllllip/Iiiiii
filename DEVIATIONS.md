@@ -38,6 +38,27 @@ Silence is a bug: if you find a difference not listed here, it is a defect.
   exact neighbour offset for this test could not be verified from assets.
 * **Emissive rendering** (`emissiveRendering` full-bright states) is not tabled yet.
 
+## World generation
+* **Not bit-identical to real Minecraft for the same seed.** Determinism across our own reloads is
+  exact, but several pieces live in game code and are reconstructed: the OverworldBiomeBuilder
+  parameter table, the meaning of 26.3's new noise `base_amplitude` (used as the NormalNoise value
+  factor), aquifer internals (simplified nearest-cell fluid levels, no barriers), ore-vein internals,
+  feature ordering (FeatureSorter replaced by first-appearance order), and many feature algorithms.
+* **New 26.3 biomes**: `dappled_forest` placed as the variant of temperate/neutral-humidity forest,
+  `sulfur_caves` as dry (humidity < -0.7) underground; their real placement is in code.
+* **Decoration isolation**: each chunk's features are generated against undecorated neighbours and
+  merged in canonical order (to be load-order independent). Vanilla features can see neighbours'
+  already-placed features; ours cannot, so e.g. trees from adjacent chunks may overlap.
+* **Not implemented feature types** (skipped): geode, fossil, large_dripstone, speleothem_cluster,
+  root_system, iceberg, blue_ice, underwater_magma, spike, overlay, random_neighbor_spread,
+  bonus_chest, nether/end features; tree decorators pale_moss, creaking_heart, shelf_mushroom.
+* **Not implemented structures**: desert pyramid, jungle temple, swamp hut, ocean monument,
+  woodland mansion (all code-built in vanilla). Mineshafts and strongholds are simplified procedural
+  versions; stronghold placement ignores preferred biomes. Jigsaw terrain adaptation (beardifier) is
+  not applied, entities in templates (villagers etc.) are not spawned.
+* **Spawn point**: nearest dry, non-ocean column spiralling from 0,0 (vanilla uses spawn_target
+  climate search).
+
 ## Known defects (to fix, not intended deviations)
 * Sunset/sunrise fan shows hard wedge edges against the sky disc (see shots/sunset.png).
 * No frustum culling yet; all loaded sections are drawn.
