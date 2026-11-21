@@ -41,8 +41,9 @@ Silence is a bug: if you find a difference not listed here, it is a defect.
 ## World generation
 * **Not bit-identical to real Minecraft for the same seed.** Determinism across our own reloads is
   exact, but several pieces live in game code and are reconstructed: the OverworldBiomeBuilder
-  parameter table, the meaning of 26.3's new noise `base_amplitude` (used as the NormalNoise value
-  factor), aquifer internals (simplified nearest-cell fluid levels, no barriers), ore-vein internals,
+  parameter table, 26.3's new noise `base_amplitude` (its PerlinNoise normalisation is code-side; using it
+  with the known PerlinNoise produced 1.5% deep ocean and no mushroom fields, so the 1.21 NormalNoise
+  factor `(1/6)/expectedDeviation(span)` is used, which the unchanged octave amplitudes were tuned for), aquifer internals (simplified nearest-cell fluid levels, no barriers), ore-vein internals,
   feature ordering (FeatureSorter replaced by first-appearance order), and many feature algorithms.
 * **New 26.3 biomes**: `dappled_forest` placed as the variant of temperate/neutral-humidity forest,
   `sulfur_caves` as dry (humidity < -0.7) underground; their real placement is in code.

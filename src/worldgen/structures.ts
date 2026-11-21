@@ -22,7 +22,7 @@ interface Piece {
   box: Box;
   place(g: GenAccess, clip: Box, gen: WorldGenerator): void;
 }
-interface Start { pieces: Piece[]; step: number }
+interface Start { pieces: Piece[]; step: number; name?: string }
 
 const ROT_DIRS = ['north', 'east', 'south', 'west'];
 const rotDir = (d: string, rot: number) => { const i = ROT_DIRS.indexOf(d); return i < 0 ? d : ROT_DIRS[(i + rot) & 3]; };
@@ -138,7 +138,7 @@ export class StructureManager {
       const rr = new JavaRandom(0);
       this.largeSalt(rr, cx, cz, 0);
       result = this.generate(def, c.structure.replace('minecraft:', ''), rr, cx, cz);
-      if (result) break;
+      if (result) { result.name = c.structure.replace('minecraft:', ''); break; }
     }
     this.starts.set(key, result);
     return result;

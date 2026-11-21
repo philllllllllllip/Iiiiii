@@ -112,7 +112,13 @@ export class NormalNoise {
     while (amps.length < count) amps.push(1);
     this.first = PerlinNoise.create(r, p.base_octave, amps);
     this.second = PerlinNoise.create(r, p.base_octave, amps);
-    this.valueFactor = p.base_amplitude;
+    // 26.3 stores a precomputed `base_amplitude`, but its companion PerlinNoise normalisation lives in
+    // code we do not have (it ignores trailing zero octaves: [1,1] and [1,1,0,0,0,0] share one value).
+    // Using it with the 1.21 PerlinNoise gave ~1.5% deep ocean and no mushroom fields, so the 1.21
+    // NormalNoise factor (1/6)/expectedDeviation(octave span) is used instead (DEVIATIONS.md).
+    let lo = -1, hi = -1;
+    amps.forEach((a, i) => { if (a !== 0) { if (lo < 0) lo = i; hi = i; } });
+    this.valueFactor = 0.16666666666666666 / (0.1 * (1 + 1 / (hi - lo + 1)));
     this.maxValue = (this.first.maxValue + this.second.maxValue) * this.valueFactor;
   }
   getValue(x: number, y: number, z: number): number {

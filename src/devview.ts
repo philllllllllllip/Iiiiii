@@ -45,7 +45,34 @@ async function main(): Promise<void> {
   });
   const resize = () => { canvas.width = Math.floor(innerWidth * devicePixelRatio); canvas.height = Math.floor(innerHeight * devicePixelRatio); };
   window.addEventListener('resize', resize); resize();
-  (window as any).__mc = { cam, client, frames: 0 };
+  (window as any).__mc = { cam, client, frames: 0, placed: false };
+  // ?above=H: once the target column is loaded, put the camera H blocks above the top block, looking at
+  // the target from `back` blocks away. ?cave=1: instead find an open air pocket near the given y.
+  const tx = cam.x, tz = cam.z, above = q.get('above'), back = +(q.get('back') ?? 0);
+  const yr0 = (cam.yaw * Math.PI) / 180;
+  const place = () => {
+    const w = client.world;
+    if (!w.getChunk(Math.floor(tx) >> 4, Math.floor(tz) >> 4)) return false;
+    if (q.get('cave')) {
+      const x = Math.floor(tx), z = Math.floor(tz);
+      let best = -1, bestY = cam.y;
+      const [y0, y1] = dim === 'the_nether' ? [32, 118] : [-56, 40];
+      for (let y = y0; y < y1; y++) {
+        let open = 0;
+        for (let dy = 0; dy < 6; dy++) for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) if (w.getState(x + dx, y + dy, z + dz) === 0) open++;
+        const score = open - Math.abs(y - cam.y) * 0.5;
+        if (open > 150 && score > best) { best = score; bestY = y + 2; }
+      }
+      cam.y = bestY;
+    } else if (above !== null) {
+      let top = 319;
+      while (top > -64 && w.getState(Math.floor(tx), top, Math.floor(tz)) === 0) top--;
+      cam.y = Math.max(top, dim === 'overworld' ? 63 : top) + +above;
+      cam.x = tx + Math.sin(yr0) * back; cam.z = tz - Math.cos(yr0) * back;
+    }
+    return true;
+  };
+  if (above === null && !q.get('cave')) (window as any).__mc.placed = true;
   let last = performance.now(), acc = 0, lastView = 0;
   const frame = (now: number) => {
     const dt = Math.min(0.25, (now - last) / 1000); last = now;
@@ -59,9 +86,10 @@ async function main(): Promise<void> {
     if (keys.has('KeyD')) { cam.x -= fz * s; cam.z += fx * s; }
     if (keys.has('Space')) cam.y += s;
     if (keys.has('ShiftLeft')) cam.y -= s;
+    if (!(window as any).__mc.placed && place()) (window as any).__mc.placed = true;
     if (now - lastView > 250) { client.setView(cam.x, cam.y, cam.z, rd); lastView = now; }
     const biome = client.world.biome(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z));
-    wr.render(cam, gameTime, acc, biome, { renderDistance: rd, gamma: 0.5, clouds: (q.get('clouds') as any) ?? 'fancy', shadows: q.get('shadows') === '1' }, canvas.width, canvas.height);
+    wr.render(cam, gameTime, acc, biome, { renderDistance: rd, gamma: +(q.get('gamma') ?? 0.5), clouds: (q.get('clouds') as any) ?? 'fancy', shadows: q.get('shadows') === '1' }, canvas.width, canvas.height);
     (window as any).__mc.frames++;
     requestAnimationFrame(frame);
   };
