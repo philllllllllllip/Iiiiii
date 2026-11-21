@@ -62,6 +62,11 @@ export class Game {
   swingTime = 0; swingO = 0; swinging = false;
   gameRules: Record<string, boolean | number> = { doDaylightCycle: true, keepInventory: false, naturalRegeneration: true, doMobSpawning: true, doTileDrops: true, fallDamage: true };
   hardcore = false;
+  pendingBonusChest = false;
+  /** block entity inventories keyed "x,y,z": chests (27), furnaces (3 + progress) */
+  readonly containers = new Map<string, { kind: string; items: (ItemStack | null)[]; burn: number; burnMax: number; cook: number; cookMax: number }>();
+  onOpenScreen: (kind: string, data: any) => void = () => {};
+  recipes: any = null;
   private lastView = 0;
   onDeath: (msg: string) => void = () => {};
   onSound: (name: string, x: number, y: number, z: number, vol?: number, pitch?: number) => void = () => {};
@@ -128,6 +133,8 @@ export class Game {
     // block targeting
     const [dx, dy, dz] = this.look();
     this.hit = p.dead || p.gameMode === 'spectator' ? null : raycast(this.client.world, this.props, p.x, p.y + p.eyeHeight, p.z, dx, dy, dz, this.reach());
+    if (this.pendingBonusChest && this.spawnReady() && this.client.world.getChunk(Math.floor(p.x) >> 4, Math.floor(p.z) >> 4)) { this.pendingBonusChest = false; this.placeBonusChest(); }
+    this.tickFurnaces();
     this.tickBreaking();
     this.tickUse();
     // swing animation (LivingEntity.updateSwingTime, 6 ticks)
@@ -326,6 +333,15 @@ export class Game {
     const target = w.getState(h.x, h.y, h.z);
     const tname = this.reg.name(target);
     if (!(p.sneaking && held)) {
+      const key = `${h.x},${h.y},${h.z}`;
+      if (tname === 'crafting_table') { this.onOpenScreen('crafting', null); this.swing(); return; }
+      if (tname === 'chest' || tname === 'trapped_chest' || tname === 'barrel' || tname === 'ender_chest') {
+        if (tname.endsWith('chest') && this.info.solidRender[w.getState(h.x, h.y + 1, h.z)]) return;
+        this.onOpenScreen('chest', this.container(key, 'chest'));
+        this.onSound(tname === 'barrel' ? 'block.barrel.open' : tname === 'ender_chest' ? 'block.ender_chest.open' : 'block.chest.open', h.x, h.y, h.z, 0.5, Math.random() * 0.1 + 0.9);
+        this.swing(); return;
+      }
+      if (tname === 'furnace' || tname === 'smoker' || tname === 'blast_furnace') { this.onOpenScreen('furnace', this.container(key, 'furnace')); this.swing(); return; }
       if ((/_door$|_trapdoor$|_fence_gate$/.test(tname) && !/^iron_/.test(tname)) || tname === 'lever') {
         const open = this.reg.hasProp(target, 'open') ? 'open' : 'powered';
         const nv = this.reg.prop(target, open) === 'true' ? 'false' : 'true';
@@ -363,6 +379,59 @@ export class Game {
     this.blockSound(states[0][3], 'place', px, py, pz);
     this.swing();
     if (!p.creative) { held.count--; if (held.count <= 0) p.inventory.held = null; }
+  }
+
+  container(key: string, kind: string) {
+    let c = this.containers.get(key);
+    if (!c) { c = { kind, items: new Array(kind === 'chest' ? 27 : 3).fill(null), burn: 0, burnMax: 0, cook: 0, cookMax: 200 }; this.containers.set(key, c); }
+    return c;
+  }
+
+  /** AbstractFurnaceBlockEntity.serverTick for every furnace with contents. */
+  private tickFurnaces(): void {
+    if (!this.recipes) return;
+    for (const [key, f] of this.containers) {
+      if (f.kind !== 'furnace') continue;
+      const [x, y, z] = key.split(',').map(Number);
+      const st = this.client.world.getState(x, y, z);
+      if (!/furnace|smoker/.test(this.reg.name(st))) { continue; }
+      const input = f.items[0], fuel = f.items[1], out = f.items[2];
+      const recipe = input ? this.recipes.smelting.get(input.id) : null;
+      const canCook = recipe && (!out || (out.id === recipe.out.id && out.count + recipe.out.count <= this.items.maxStack(out.id)));
+      const wasLit = f.burn > 0;
+      if (f.burn > 0) f.burn--;
+      if (f.burn <= 0 && canCook && fuel) {
+        const bt = fuelTime(this.items.name(fuel.id), this.items.comp(fuel.id, 'cooking_fuel'));
+        if (bt > 0) { f.burn = f.burnMax = bt; fuel.count--; if (fuel.count <= 0) f.items[1] = this.items.name(fuel.id) === 'lava_bucket' ? { id: this.items.id('bucket'), count: 1 } : null; }
+      }
+      if (f.burn > 0 && canCook) {
+        f.cookMax = recipe.time;
+        if (++f.cook >= f.cookMax) {
+          f.cook = 0;
+          f.items[2] = out ? { ...out, count: out.count + recipe.out.count } : { ...recipe.out };
+          input!.count--; if (input!.count <= 0) f.items[0] = null;
+        }
+      } else if (f.cook > 0) f.cook = Math.max(0, f.cook - 2);
+      const lit = f.burn > 0;
+      if (lit !== wasLit && this.reg.hasProp(st, 'lit')) this.client.setBlock(x, y, z, this.reg.withProp(st, 'lit', lit ? 'true' : 'false'));
+    }
+  }
+
+  /** BonusChestFeature: chest + 4 torches near spawn, contents from loot table chests/spawn_bonus_chest. */
+  private placeBonusChest(): void {
+    const p = this.player; const w = this.client.world;
+    for (let tries = 0; tries < 64; tries++) {
+      const x = Math.floor(p.x) + Math.floor(Math.random() * 8) - 4, z = Math.floor(p.z) + Math.floor(Math.random() * 8) - 4;
+      let y = 319; while (y > -64 && (w.getState(x, y, z) === 0 || this.props.replaceable.has(this.reg.stateBlock[w.getState(x, y, z)]))) y--;
+      y++;
+      if (!this.info.solidRender[w.getState(x, y - 1, z)]) continue;
+      this.setBlock(x, y, z, this.reg.defaultState('chest'));
+      const c = this.container(`${x},${y},${z}`, 'chest');
+      const loot = this.loot.roll('chests/spawn_bonus_chest', { rng: Math.random });
+      loot.forEach((s, i) => { let k = Math.floor(Math.random() * 27); for (let j = 0; j < 27 && c.items[k]; j++) k = (k + 1) % 27; c.items[k] = s; void i; });
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (w.getState(x + dx, y, z + dz) === 0 && this.info.solidRender[w.getState(x + dx, y - 1, z + dz)]) this.setBlock(x + dx, y, z + dz, this.reg.defaultState('torch'));
+      return;
+    }
   }
 
   pickBlock(): void {
@@ -499,6 +568,19 @@ function oreXp(name: string): number {
   if (name === 'spawner') return r(15, 43);
   if (name === 'sculk' || name === 'sculk_catalyst' || name === 'sculk_shrieker' || name === 'sculk_sensor') return name === 'sculk' ? 1 : 5;
   return 0;
+}
+
+/** AbstractFurnaceBlockEntity fuel times (ticks); 26.3 marks fuels with the cooking_fuel component. */
+function fuelTime(name: string, comp: any): number {
+  if (!comp) return 0;
+  const t: Record<string, number> = { lava_bucket: 20000, coal_block: 16000, dried_kelp_block: 4001, blaze_rod: 2400, coal: 1600, charcoal: 1600, stick: 100, bamboo: 50, scaffolding: 50 };
+  if (name in t) return t[name];
+  if (/_planks$|_log$|_wood$|_stem$|_hyphae$|^stripped_|_fence$|_fence_gate$|_stairs$|_trapdoor$|crafting_table|bookshelf|chest|barrel|lectern|jukebox|note_block|composter|loom|smithing_table|cartography_table|fletching_table|daylight_detector|_banner$|_sign$/.test(name)) return /_slab$/.test(name) ? 150 : /_door$|_sign$/.test(name) ? 200 : 300;
+  if (/_slab$/.test(name)) return 150;
+  if (/_door$|_boat$/.test(name)) return name.endsWith('_boat') ? 1200 : 200;
+  if (/_sapling$|_carpet$|bowl|_button$|^stick$/.test(name)) return /_carpet$/.test(name) ? 67 : 100;
+  if (/_wool$/.test(name)) return 100;
+  return 300;
 }
 
 function materialOf(name: string): string {

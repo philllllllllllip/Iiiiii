@@ -176,6 +176,19 @@ export class ItemRenderer {
     return mul(m, translate(-0.5, -0.5, -0.5));
   }
 
+  /** Draw an item icon at GUI position (x, y) (16x16 slot). */
+  drawGui(item: string, x: number, y: number, guiW: number, guiH: number): void {
+    const gl = this.gl;
+    const parts = this.resolve(item, 'gui');
+    const flat = parts.every(({ m }) => this.models.models[m]?.gui === 'front' || !!this.models.models[m]?.layers);
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    // the GUI pose flips Y (scale 16,-16,16), which inverts winding: cull front-facing CW triangles instead
+    gl.enable(gl.CULL_FACE); gl.frontFace(gl.CW);
+    this.draw(item, 'gui', orthoGui(guiW, guiH), guiItemPose(x, y), null, null, null, flat ? GUI_LIGHTS_FLAT : GUI_LIGHTS_3D);
+    gl.frontFace(gl.CCW); gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+  }
+
   isBlockLike(item: string): boolean {
     for (const { m } of this.resolve(item, 'gui')) { const md = this.models.models[m]; if (md && md.elements.length && !md.layers) return true; }
     return false;
@@ -232,6 +245,20 @@ function normalMatrix(m: M4): Float32Array {
     (b * f - c * e) / det, -(a * f - c * d) / det, (a * e - b * d) / det,
   ]);
 }
+
+/** GUI item rendering (ItemRenderer.renderGuiItem): ortho over GUI pixels, 16px item, Lighting.setupFor3DItems / ForFlatItems. */
+export function guiItemPose(x: number, y: number): M4 { return mul(translate(x + 8, y + 8, 150), scale(16, -16, 16)); }
+export function orthoGui(w: number, h: number): M4 {
+  const m = new Float32Array(16);
+  m[0] = 2 / w; m[5] = -2 / h; m[10] = -2 / 2000; m[12] = -1; m[13] = 1; m[14] = 0; m[15] = 1;
+  return m;
+}
+const ryxz = (y: number, x: number) => mul(rotY((y * 180) / Math.PI), rotX((x * 180) / Math.PI));
+const apply3 = (m: M4, v: number[]) => [m[0] * v[0] + m[4] * v[1] + m[8] * v[2], m[1] * v[0] + m[5] * v[1] + m[9] * v[2], m[2] * v[0] + m[6] * v[1] + m[10] * v[2]];
+const M3D = mul(scale(1, -1, 1), mul(ryxz(1.0821041, 3.2375858), ryxz(-0.3926991, 2.3561945)));
+const MFLAT = ryxz(-0.3926991, 2.3561945);
+export const GUI_LIGHTS_3D: [number[], number[]] = [norm(apply3(M3D, [0.2, 1, -0.7])), norm(apply3(M3D, [-0.2, 1, 0.7]))];
+export const GUI_LIGHTS_FLAT: [number[], number[]] = [norm(apply3(MFLAT, [0.2, 1, -0.7])), norm(apply3(MFLAT, [-0.2, 1, 0.7]))];
 
 export const ITEM_LIGHT0 = norm([0.2, 1, -0.7]);
 export const ITEM_LIGHT1 = norm([-0.2, 1, 0.7]);

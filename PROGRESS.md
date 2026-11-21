@@ -64,3 +64,40 @@ Driven by the 26.3 worldgen data pack (data/minecraft/worldgen), not a homemade 
 * Performance (Node, one core): proto ~50 ms/chunk, decoration ~80 ms/chunk.
 * Tests: same seed -> identical chunks across fresh generators (`tests/worldgen.test.ts`);
   exact PNG decoding of all 3964 textures (`tests/png.test.ts`).
+
+## Phase 4 — Physics, break/place, drops, survival stats — DONE (core)
+* `game/entity.ts` Entity.move/collide port: Y-then-major-axis resolution, 0.6 step-up, sneak edge guard,
+  block speed factors (soul sand/honey), fall distance; fluids (water/lava heights, eye-in-water).
+* `game/player.ts` LivingEntity.travel constants: gravity 0.08, drag 0.98/0.91, friction-scaled ground
+  speed 0.216/f^3, air speed 0.02/0.026, jump 0.42 (+0.2 sprint boost), sprint x1.3 with FOV kick,
+  swimming, ladders, creative flight; FoodData (exhaustion/saturation/regen/starvation), air & drowning,
+  fall damage, XP levels; view bobbing and hurt tilt.
+* `game/blockprops.ts` hardness, collision shapes (model-derived; 1.5 fences/walls), friction, climbables.
+* `game/items.ts` 26.3 item components: tool rules (speed/correct_for_drops via tags), stack sizes, food.
+* `game/loot.ts` loot-table evaluation (pools, alternatives, conditions incl. match_tool/silk touch,
+  table_bonus, survives_explosion; functions set_count/apply_bonus/limit_count/explosion_decay).
+* `game/placement.ts` placement states (axis, facing rules per family, slabs incl. merging, stairs with
+  shape, trapdoors, doors with hinge, beds, torches/signs/banners/heads wall variants, buttons/levers,
+  waterlogging) and neighbour shape updates (fences, panes, walls, redstone wire, stairs, snowy grass).
+* `game/game.ts` survival breaking with destroy_stage overlay, creative instant break, drops + ore XP,
+  tool durability, placement collision check, doors/trapdoors/gates/levers, eating, item entities
+  (physics, pickup, merging stacks into inventory), pick block, drop, bonus chest, furnaces ticking.
+
+## Phase 5 — UI — DONE (core screens)
+* `gui/renderer.ts` GuiGraphics: integer GUI scale (Window.calculateScale), nine-slice/tile/stretch
+  sprites from the atlas metadata, logical-size blits, vanilla font (advances, shadow 25%, formatting
+  codes, unifont fallback), pose stack.
+* `gui/panorama.ts` 26.3 panorama cube (85 deg FOV, 0.1 deg/tick spin) + Gaussian menu blur.
+* Screens: Mojang Studios LoadingOverlay, Title (logo, edition, rotating/pulsing splash from splashes.txt),
+  Select World (search, list with icons/dates/mode, play/create/edit(duplicate)/delete/re-create),
+  Create World (Game/World/More tabs, name/mode/difficulty/cheats, type/seed/structures/bonus chest,
+  create disabled when name blank), terrain loading, Pause, Options, Video Settings, Music & Sounds,
+  Death (hardcore variant), Confirm.
+* HUD: hotbar + selection, offhand, inverted crosshair, hearts (blink, low-health shake, hardcore),
+  food (saturation jitter), armour, air bubbles, XP bar + outlined level number, held item name fade,
+  F3 debug screen.
+* Containers: survival inventory (2x2 crafting, armour, offhand), crafting table (3x3), chest,
+  furnace (fuel/cook progress), creative inventory with tabs, search and scrollbar. Click semantics:
+  pickup/place/swap/split, drag-distribute, shift-click, number-key hotbar swap, double-click collect.
+* Sound manager: sounds.json events, weighted variants, categories, block sound groups, menu/game music.
+* Options and worlds persist (localStorage / IndexedDB); player, time and containers saved per world.

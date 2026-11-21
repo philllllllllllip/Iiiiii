@@ -62,6 +62,20 @@ Silence is a bug: if you find a difference not listed here, it is a defect.
 * **Spawn point**: nearest dry, non-ocean column spiralling from 0,0 (vanilla uses spawn_target
   climate search).
 
+## Gameplay / UI
+* **Block hardness, collision presence, sound groups, fuel times, ore XP, creative tab contents** live in
+  Java code; they are tabled from Blocks.java/Items.java knowledge with regex families. New 26.3
+  blocks (sulfur family) use stone values.
+* **Creative tab contents** are classified by name/components, not the hand-written CreativeModeTabs lists,
+  so item order and some memberships differ.
+* **Player model** in the inventory, **entity/special item models** (chests, beds, banners, shields,
+  heads, shulker boxes, copper golem statues) are not rendered yet.
+* **Multiplayer / Realms / Advancements / Statistics / LAN / Controls / Language / Skin customisation**
+  buttons are present but disabled (single-player browser client).
+* **Redstone**: wires connect visually; there is no power simulation.
+* **Enchanting, brewing, anvil, smithing, loom, stonecutter** containers are not implemented yet.
+* XP orbs are granted directly instead of spawning orb entities.
+
 ## Known defects (to fix, not intended deviations)
 * Nether generation shows isolated floating netherrack blocks (see shots/nether2.png, nether3.png);
   vanilla terrain has none. Root cause not yet found (density interpolation or carver suspected).
